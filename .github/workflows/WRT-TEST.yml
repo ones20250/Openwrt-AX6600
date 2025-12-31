@@ -22,11 +22,11 @@ on:
           - IPQ807X-WIFI-NO
           - TEST
       SOURCE:
-        default: 'VIKINGYFY/immortalwrt'
+        default: 'ones20250/immortalwrt_ipq'
         required: true
         type: choice
         options:
-          - VIKINGYFY/immortalwrt
+          - ones20250/immortalwrt_ipq
           - immortalwrt/immortalwrt
           - LiBwrt/openwrt-6.x
           - qosmio/openwrt-ipq
