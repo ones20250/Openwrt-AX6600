@@ -5,7 +5,7 @@
 https://github.com/immortalwrt/immortalwrt.git
 
 高通版：
-https://github.com/VIKINGYFY/immortalwrt.git
+https://github.com/ones20250/immortalwrt_ipq.git
 
 # U-BOOT
 
