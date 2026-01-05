@@ -150,6 +150,8 @@ jobs:
 
           ./scripts/feeds update -a
           ./scripts/feeds install -a
+          # 额外强制安装缺失的 python 依赖
+          ./scripts/feeds install -f python3-pysocks python3-unidecode
 
       - name: Custom Packages
         run: |
@@ -168,6 +170,9 @@ jobs:
             #cat $GITHUB_WORKSPACE/Config/$WRT_CONFIG.txt $GITHUB_WORKSPACE/Config/GENERAL.txt >> .config
             cat $GITHUB_WORKSPACE/Config/$WRT_CONFIG.txt $GITHUB_WORKSPACE/Config/GENERAL_AX6600.txt >> .config
           fi
+          # --- 关键修复代码开始 ---
+          # 修复报错：将缺失的 kmod-fs-ntfs33 替换为现有的 kmod-fs-ntfs3
+          sed -i 's/CONFIG_PACKAGE_kmod-fs-ntfs33=y/CONFIG_PACKAGE_kmod-fs-ntfs3=y/g' .config
 
           $GITHUB_WORKSPACE/Scripts/Settings.sh
 
