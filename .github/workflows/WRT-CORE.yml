@@ -170,9 +170,22 @@ jobs:
             #cat $GITHUB_WORKSPACE/Config/$WRT_CONFIG.txt $GITHUB_WORKSPACE/Config/GENERAL.txt >> .config
             cat $GITHUB_WORKSPACE/Config/$WRT_CONFIG.txt $GITHUB_WORKSPACE/Config/GENERAL_AX6600.txt >> .config
           fi
-          # --- 关键修复代码开始 ---
-          # 修复报错：将缺失的 kmod-fs-ntfs33 替换为现有的 kmod-fs-ntfs3
-          sed -i 's/CONFIG_PACKAGE_kmod-fs-ntfs33=y/CONFIG_PACKAGE_kmod-fs-ntfs3=y/g' .config
+          # --- 修复警告的关键代码开始 ---
+          
+          # 2. 修正 NTFS 驱动依赖名 (针对 luci-app-diskman)
+          # 直接修改所有 Makefile，将不存在的 kmod-fs-ntfs33 替换为 kmod-fs-ntfs3
+          find ./package -name Makefile -exec sed -i 's/kmod-fs-ntfs33/kmod-fs-ntfs3/g' {} +
+
+          # 3. 移除缺失的 5G/QModem 内核依赖 (针对 QModem)
+          # 既然源码里没有这些内核模块，直接从依赖描述中删掉，防止扫描报错
+          find ./package -name Makefile -exec sed -i 's/+kmod-mhi-wwan//g' {} +
+          find ./package -name Makefile -exec sed -i 's/+quectel-CM-5G//g' {} +
+
+          # 4. 彻底禁用缺失依赖的插件 (针对 onionshare)
+          # 既然 Python 依赖包不存在，编译必定失败，直接禁用该插件
+          sed -i 's/CONFIG_PACKAGE_onionshare-cli=y/# CONFIG_PACKAGE_onionshare-cli is not set/g' .config
+          
+          # --- 修复完毕 ---
 
           $GITHUB_WORKSPACE/Scripts/Settings.sh
 
