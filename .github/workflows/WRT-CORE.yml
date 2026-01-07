@@ -144,14 +144,31 @@ jobs:
             echo "caches cleanup done!"
           fi
 
+     # - name: Update Feeds
+     #   run: |
+     #     cd ./wrt/
+
+     #     ./scripts/feeds update -a
+     #     ./scripts/feeds install -a
+     #     # 额外强制安装缺失的 python 依赖
+     #     ./scripts/feeds install -f python3-pysocks python3-unidecode
       - name: Update Feeds
         run: |
           cd ./wrt/
+          # 1. 备份原有的 feeds 配置
+          cp feeds.conf.default feeds.conf.default.bak
+
+          # 2. 将官方源添加为“备用源” (命名为 extra_packages)
+          echo "src-git extra_packages https://github.com/openwrt/packages.git" >> feeds.conf.default
 
           ./scripts/feeds update -a
+
+          # 3. 【关键步骤】仅从官方源中安装你缺失的那几个包，而不是全部
+          # 这样不会覆盖 ImmortalWrt 自带的同名包
+          ./scripts/feeds install -p extra_packages python3-pysocks python3-unidecode
+          
+          # 4. 安装 ImmortalWrt 原有的所有包（原有源优先级更高）
           ./scripts/feeds install -a
-          # 额外强制安装缺失的 python 依赖
-          ./scripts/feeds install -f python3-pysocks python3-unidecode
 
       - name: Custom Packages
         run: |
