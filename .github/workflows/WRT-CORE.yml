@@ -187,20 +187,25 @@ jobs:
             #cat $GITHUB_WORKSPACE/Config/$WRT_CONFIG.txt $GITHUB_WORKSPACE/Config/GENERAL.txt >> .config
             cat $GITHUB_WORKSPACE/Config/$WRT_CONFIG.txt $GITHUB_WORKSPACE/Config/GENERAL_AX6600.txt >> .config
           fi
-          # --- 修复警告的关键代码开始 ---
+          # --- 智能修复警告开始 ---
           
-          # 2. 修正 NTFS 驱动依赖名 (针对 luci-app-diskman)
-          # 直接修改所有 Makefile，将不存在的 kmod-fs-ntfs33 替换为 kmod-fs-ntfs3
+          # 2. 修正 NTFS 驱动依赖名 (保留：这是修正 Makefile 错误，不影响完整性)
           find ./package -name Makefile -exec sed -i 's/kmod-fs-ntfs33/kmod-fs-ntfs3/g' {} +
 
-          # 3. 移除缺失的 5G/QModem 内核依赖 (针对 QModem)
-          # 既然源码里没有这些内核模块，直接从依赖描述中删掉，防止扫描报错
-          find ./package -name Makefile -exec sed -i 's/+kmod-mhi-wwan//g' {} +
-          find ./package -name Makefile -exec sed -i 's/+quectel-CM-5G//g' {} +
+          # 3. 移除缺失的 5G/QModem 内核依赖
+          # 逻辑：检查 feeds 中是否真的存在该内核模块，如果不存在才移除
+          if ! ./scripts/feeds list | grep -q "kmod-mhi-wwan"; then
+            echo "Warning: kmod-mhi-wwan not found in feeds, applying safety patch..."
+            find ./package -name Makefile -exec sed -i 's/+kmod-mhi-wwan//g' {} +
+            find ./package -name Makefile -exec sed -i 's/+quectel-CM-5G//g' {} +
+          fi
 
           # 4. 彻底禁用缺失依赖的插件 (针对 onionshare)
-          # 既然 Python 依赖包不存在，编译必定失败，直接禁用该插件
-          sed -i 's/CONFIG_PACKAGE_onionshare-cli=y/# CONFIG_PACKAGE_onionshare-cli is not set/g' .config
+          # 逻辑：如果你在 Update Feeds 里补全成功了，这里就不再禁用它
+          if ! ./scripts/feeds list | grep -q "python3-pysocks"; then
+            echo "Warning: python3-pysocks not found, disabling onionshare-cli to prevent build failure..."
+            sed -i 's/CONFIG_PACKAGE_onionshare-cli=y/# CONFIG_PACKAGE_onionshare-cli is not set/g' .config
+          fi
           
           # --- 修复完毕 ---
 
