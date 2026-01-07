@@ -119,33 +119,3 @@ UPDATE_VERSION() {
 #UPDATE_VERSION "软件包名" "测试版，true，可选，默认为否"
 UPDATE_VERSION "sing-box"
 #UPDATE_VERSION "tailscale"
-
-# === 自动化修复逻辑 ===
-
-# 1. 修正 Recursive dependency (Perl <-> OpenSSL)
-# 这是解决你日志中 "symbol PACKAGE_libopenssl is selected by PACKAGE_perl-net-dns-sec" 的关键
-if [ -f package/libs/openssl/Config.in ]; then
-    sed -i 's/select PACKAGE_libopenssl/depends on PACKAGE_libopenssl/g' package/libs/openssl/Config.in
-fi
-
-# 2. 修正 iptasn 引起的循环依赖
-find ./ -name "Makefile" | xargs grep -l "PACKAGE_iptasn" | xargs -r \
-    sed -i 's/select PACKAGE_perl/depends on PACKAGE_perl/g'
-
-# 3. 修正 python3-pysocks / unidecode 缺失导致的警告或错误
-# 既然系统找不到这两个包，我们让依赖它们的插件（如 onionshare）跳过它们
-find ./ -name "Makefile" | xargs grep -E -l "python3-(pysocks|unidecode)" | xargs -r \
-    sed -i -E 's/python3-(pysocks|unidecode)//g'
-
-# 4. 修正驱动名称错误 (ntfs33 -> ntfs3)
-find ./ -name "Makefile" | xargs grep -l "kmod-fs-ntfs33" | xargs -r \
-    sed -i 's/kmod-fs-ntfs33/kmod-fs-ntfs3/g'
-
-# 5. 修正 QModem 依赖缺失
-if [ -d "package/qmodem" ]; then
-    find package/qmodem -name "Makefile" | xargs -r \
-        sed -i -E 's/kmod-mhi-wwan|quectel-CM-5G//g'
-fi
-
-# 6. 清理 tmp 目录 (非常重要，否则 Kconfig 缓存会导致修改不生效)
-rm -rf tmp
