@@ -98,7 +98,7 @@ CONFIG_PACKAGE_libopenssl=y
 CONFIG_PACKAGE_libopenssl-conf=y
 CONFIG_PACKAGE_iptasn=y
 #禁用插 U 盘自动挂载
-CONFIG_PACKAGE_automount=n
+CONFIG_PACKAGE_automount=y
 CONFIG_PACKAGE_blkid=y
 CONFIG_PACKAGE_cfdisk=y
 CONFIG_PACKAGE_cgdisk=y
