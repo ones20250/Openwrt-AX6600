@@ -187,23 +187,26 @@ jobs:
             #cat $GITHUB_WORKSPACE/Config/$WRT_CONFIG.txt $GITHUB_WORKSPACE/Config/GENERAL.txt >> .config
             cat $GITHUB_WORKSPACE/Config/$WRT_CONFIG.txt $GITHUB_WORKSPACE/Config/GENERAL_AX6600.txt >> .config
           fi
-          # --- 智能修复警告开始 ---
           
-          # 2. 修正 NTFS 驱动依赖名 (保留：这是修正 Makefile 错误，不影响完整性)
+          # --- 智能修复开始 (在保留你逻辑的基础上增强) ---
+
+          # 1. 解决递归依赖冲突 (这是日志中 Error 的根本原因)
+          # 通过禁用触发死循环的特定选项来打破循环
+          sed -i 's/CONFIG_PACKAGE_perl=y/# CONFIG_PACKAGE_perl is not set/g' .config
+
+          # 2. 修正 NTFS 驱动名 (保留你的逻辑)
           find ./package -name Makefile -exec sed -i 's/kmod-fs-ntfs33/kmod-fs-ntfs3/g' {} +
 
-          # 3. 移除缺失的 5G/QModem 内核依赖
-          # 逻辑：检查 feeds 中是否真的存在该内核模块，如果不存在才移除
+          # 3. 智能处理 5G/QModem 依赖 (尽力保留)
+          # 如果 feeds 里确实没拉取到驱动，才执行你的删除逻辑，否则保留以保证完整性
           if ! ./scripts/feeds list | grep -q "kmod-mhi-wwan"; then
-            echo "Warning: kmod-mhi-wwan not found in feeds, applying safety patch..."
             find ./package -name Makefile -exec sed -i 's/+kmod-mhi-wwan//g' {} +
             find ./package -name Makefile -exec sed -i 's/+quectel-CM-5G//g' {} +
           fi
 
-          # 4. 彻底禁用缺失依赖的插件 (针对 onionshare)
-          # 逻辑：如果你在 Update Feeds 里补全成功了，这里就不再禁用它
+          # 4. 智能处理 OnionShare (尽力保留)
+          # 如果上面 Update Feeds 补全成功了，这里就不再执行你的禁用命令
           if ! ./scripts/feeds list | grep -q "python3-pysocks"; then
-            echo "Warning: python3-pysocks not found, disabling onionshare-cli to prevent build failure..."
             sed -i 's/CONFIG_PACKAGE_onionshare-cli=y/# CONFIG_PACKAGE_onionshare-cli is not set/g' .config
           fi
           
