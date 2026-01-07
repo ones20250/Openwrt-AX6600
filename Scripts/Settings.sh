@@ -33,6 +33,46 @@ sed -i "s/192\.168\.[0-9]*\.[0-9]*/$WRT_IP/g" $CFG_FILE
 #修改默认主机名
 sed -i "s/hostname='.*'/hostname='$WRT_NAME'/g" $CFG_FILE
 
+# =========================================================
+# 3. 核心依赖修复与报错规避 (暴力补丁)
+# =========================================================
+
+echo "Starting automated fix for dependencies and errors..."
+
+# 3.1 修正 python3-pysocks / unidecode 缺失警告 (解决 onionshare-cli 报错)
+# 直接移除找不到的依赖，防止 make defconfig 中断
+find ./feeds/packages/ -name "Makefile" | xargs grep -E -l "python3-(pysocks|unidecode)" | xargs -r \
+    sed -i -E 's/python3-(pysocks|unidecode)//g'
+
+# 3.2 破碎递归依赖环 (Recursive dependency Fix)
+# 将导致死循环的 'select' 属性改为 'depends on'
+# 针对 OpenSSL
+if [ -f package/libs/openssl/Config.in ]; then
+    sed -i 's/select PACKAGE_libopenssl/depends on PACKAGE_libopenssl/g' package/libs/openssl/Config.in
+fi
+
+# 针对 iptasn 对 perl 的强制依赖
+find ./ -name "Makefile" | xargs grep -l "PACKAGE_iptasn" | xargs -r \
+    sed -i 's/select PACKAGE_perl/depends on PACKAGE_perl/g'
+
+# 3.3 修正驱动名错误 (针对 diskman 等插件)
+# 修正 ntfs33 -> ntfs3
+find ./ -name "Makefile" | xargs grep -l "kmod-fs-ntfs33" | xargs -r \
+    sed -i 's/kmod-fs-ntfs33/kmod-fs-ntfs3/g'
+
+# 3.4 修正 QModem 依赖 (可选，防止其导致编译失败)
+if [ -d "package/qmodem" ]; then
+    find package/qmodem -name "Makefile" | xargs -r \
+        sed -i -E 's/kmod-mhi-wwan|quectel-CM-5G//g'
+fi
+
+# =========================================================
+# 4. 强制清理缓存并写入配置
+# =========================================================
+
+# 清理 Kconfig 缓存 (至关重要)
+rm -rf tmp
+
 #配置文件修改
 echo "CONFIG_PACKAGE_luci=y" >> ./.config
 echo "CONFIG_LUCI_LANG_zh_Hans=y" >> ./.config
