@@ -188,25 +188,29 @@ jobs:
             cat $GITHUB_WORKSPACE/Config/$WRT_CONFIG.txt $GITHUB_WORKSPACE/Config/GENERAL_AX6600.txt >> .config
           fi
           
-          # --- 智能修复开始 (在保留你逻辑的基础上增强) ---
+          # --- 修复逻辑升级 ---
 
-          # 1. 解决递归依赖冲突 (这是日志中 Error 的根本原因)
-          # 通过禁用触发死循环的特定选项来打破循环
+          # 1. 彻底解决递归依赖 (通过禁用环路中的关键非核心插件)
+          # 禁用 iptasn 和 perl 及其相关的安全插件，这些通常是三方源引入的
           sed -i 's/CONFIG_PACKAGE_perl=y/# CONFIG_PACKAGE_perl is not set/g' .config
+          sed -i 's/CONFIG_PACKAGE_perl-net-dns-sec=y/# CONFIG_PACKAGE_perl-net-dns-sec is not set/g' .config
+          sed -i 's/CONFIG_PACKAGE_iptasn=y/# CONFIG_PACKAGE_iptasn is not set/g' .config
 
-          # 2. 修正 NTFS 驱动名 (保留你的逻辑)
+          # 2. 修正 NTFS 驱动名 (保持不变)
           find ./package -name Makefile -exec sed -i 's/kmod-fs-ntfs33/kmod-fs-ntfs3/g' {} +
 
-          # 3. 智能处理 5G/QModem 依赖 (尽力保留)
-          # 如果 feeds 里确实没拉取到驱动，才执行你的删除逻辑，否则保留以保证完整性
-          if ! ./scripts/feeds list | grep -q "kmod-mhi-wwan"; then
+          # 3. 智能补充/移除内核模块依赖 (针对 5G/QModem)
+          # 注意：内核模块报错是因为你的 Kernel Source 不支持 MHI，补全 Feeds 无法解决，必须移除
+          if ! grep -q "CONFIG_MHI_BUS=y" target/linux/$(echo $WRT_TARGET)/config-* 2>/dev/null; then
+            echo "Kernel does not support MHI, removing 5G dependencies..."
             find ./package -name Makefile -exec sed -i 's/+kmod-mhi-wwan//g' {} +
             find ./package -name Makefile -exec sed -i 's/+quectel-CM-5G//g' {} +
           fi
 
-          # 4. 智能处理 OnionShare (尽力保留)
-          # 如果上面 Update Feeds 补全成功了，这里就不再执行你的禁用命令
-          if ! ./scripts/feeds list | grep -q "python3-pysocks"; then
+          # 4. 智能处理 OnionShare (补全优先)
+          # 检查 feeds 目录是否真的同步到了这两个 Python 包
+          if [ ! -d "package/feeds/extra_packages/python3-pysocks" ]; then
+            echo "python3-pysocks still missing, disabling onionshare-cli..."
             sed -i 's/CONFIG_PACKAGE_onionshare-cli=y/# CONFIG_PACKAGE_onionshare-cli is not set/g' .config
           fi
           
