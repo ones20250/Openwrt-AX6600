@@ -33,45 +33,6 @@ sed -i "s/192\.168\.[0-9]*\.[0-9]*/$WRT_IP/g" $CFG_FILE
 #修改默认主机名
 sed -i "s/hostname='.*'/hostname='$WRT_NAME'/g" $CFG_FILE
 
-# =========================================================
-# 3. 核心依赖修复与报错规避 (暴力补丁)
-# =========================================================
-
-echo "Starting automated fix for dependencies and errors..."
-
-# 3.1 修正 python3-pysocks / unidecode 缺失警告 (解决 onionshare-cli 报错)
-# 直接移除找不到的依赖，防止 make defconfig 中断
-find ./feeds/packages/ -name "Makefile" | xargs grep -E -l "python3-(pysocks|unidecode)" | xargs -r \
-    sed -i -E 's/python3-(pysocks|unidecode)//g'
-
-# 3.2 破碎递归依赖环 (Recursive dependency Fix)
-# 将导致死循环的 'select' 属性改为 'depends on'
-# 针对 OpenSSL
-if [ -f package/libs/openssl/Config.in ]; then
-    sed -i 's/select PACKAGE_libopenssl/depends on PACKAGE_libopenssl/g' package/libs/openssl/Config.in
-fi
-
-# 针对 iptasn 对 perl 的强制依赖
-find ./ -name "Makefile" | xargs grep -l "PACKAGE_iptasn" | xargs -r \
-    sed -i 's/select PACKAGE_perl/depends on PACKAGE_perl/g'
-
-# 3.3 修正驱动名错误 (针对 diskman 等插件)
-# 修正 ntfs33 -> ntfs3
-find ./ -name "Makefile" | xargs grep -l "kmod-fs-ntfs33" | xargs -r \
-    sed -i 's/kmod-fs-ntfs33/kmod-fs-ntfs3/g'
-
-# 3.4 修正 QModem 依赖 (可选，防止其导致编译失败)
-if [ -d "package/qmodem" ]; then
-    find package/qmodem -name "Makefile" | xargs -r \
-        sed -i -E 's/kmod-mhi-wwan|quectel-CM-5G//g'
-fi
-
-# =========================================================
-# 4. 强制清理缓存并写入配置
-# =========================================================
-
-# 清理 Kconfig 缓存 (至关重要)
-rm -rf tmp
 
 #配置文件修改
 echo "CONFIG_PACKAGE_luci=y" >> ./.config
@@ -105,4 +66,27 @@ if [[ "${WRT_TARGET^^}" == *"QUALCOMMAX"* ]]; then
 		find $DTS_PATH -type f ! -iname '*nowifi*' -exec sed -i 's/ipq\(6018\|8074\).dtsi/ipq\1-nowifi.dtsi/g' {} +
 		echo "qualcommax set up nowifi successfully!"
 	fi
+fi
+
+# =========================================================
+# 智能系统调优：优化内存水位线 (min_free_kbytes)
+# =========================================================
+
+MIN_FREE_VAL=8192
+CONF_FILE="./package/base-files/files/etc/sysctl.conf"
+
+# 提取当前值（只匹配非注释、行首）
+CURRENT_VAL=$(sed -n 's/^vm\.min_free_kbytes=\([0-9]\+\).*/\1/p' "$CONF_FILE")
+
+if [ -z "$CURRENT_VAL" ]; then
+    echo "" >> "$CONF_FILE"
+    echo "vm.min_free_kbytes=$MIN_FREE_VAL" >> "$CONF_FILE"
+    echo "Memory patch: value not found, added $MIN_FREE_VAL."
+else
+    if [ "$CURRENT_VAL" -lt "$MIN_FREE_VAL" ]; then
+        sed -i "s/^vm\.min_free_kbytes=.*/vm.min_free_kbytes=$MIN_FREE_VAL/" "$CONF_FILE"
+        echo "Memory patch: upgraded $CURRENT_VAL -> $MIN_FREE_VAL."
+    else
+        echo "Memory patch: current value ($CURRENT_VAL) is sufficient, skipped."
+    fi
 fi
