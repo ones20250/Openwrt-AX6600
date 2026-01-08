@@ -144,27 +144,14 @@ jobs:
             echo "caches cleanup done!"
           fi
 
-     # - name: Update Feeds
-     #   run: |
-     #     cd ./wrt/
-
-     #     ./scripts/feeds update -a
-     #     ./scripts/feeds install -a
-     #     # 额外强制安装缺失的 python 依赖
-     #     ./scripts/feeds install -f python3-pysocks python3-unidecode
       - name: Update Feeds
         run: |
           cd ./wrt/
-          # 添加官方 packages 源作为补充，尝试找回缺失的 python 依赖
-          echo "src-git extra_packages https://github.com/openwrt/packages.git" >> feeds.conf.default
-          
+
           ./scripts/feeds update -a
-          
-          # 仅从补充源安装缺失的包，避免干扰主源
-          ./scripts/feeds install -p extra_packages python3-pysocks python3-unidecode
-          
-          # 安装所有其他包
           ./scripts/feeds install -a
+          # 额外强制安装缺失的 python 依赖
+          ./scripts/feeds install -f python3-pysocks python3-unidecode
 
       - name: Custom Packages
         run: |
