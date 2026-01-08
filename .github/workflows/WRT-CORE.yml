@@ -144,26 +144,14 @@ jobs:
             echo "caches cleanup done!"
           fi
 
-     # - name: Update Feeds
-     #   run: |
-     #     cd ./wrt/
-
-     #     ./scripts/feeds update -a
-     #     ./scripts/feeds install -a
-          # 额外强制安装缺失的 python 依赖
-     #     ./scripts/feeds install -f python3-pysocks python3-unidecode
       - name: Update Feeds
         run: |
           cd ./wrt/
-          # 确保官方 feeds 源
-          sed -i '/packages/d' feeds.conf.default
-          echo "src-git packages https://github.com/immortalwrt/packages.git" >> feeds.conf.default
 
           ./scripts/feeds update -a
           ./scripts/feeds install -a
-          # 强制安装 Python 依赖（已保证在 pip 安装，可忽略 feeds 缺失）
-          ./scripts/feeds install -f python3-pysocks python3-unidecode || true
-
+          # 额外强制安装缺失的 python 依赖
+          ./scripts/feeds install -f python3-pysocks python3-unidecode
 
 
       - name: Custom Packages
