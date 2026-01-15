@@ -37,7 +37,7 @@ CONFIG_PACKAGE_kmod-qca-nss-drv-map-t=y
 CONFIG_PACKAGE_kmod-qca-nss-drv-bridge-mgr=y
 CONFIG_PACKAGE_kmod-qca-nss-drv-vlan-mgr=y
 #内核调整
-CONFIG_PACKAGE_kmod-bonding=y
+CONFIG_PACKAGE_kmod-bonding=n
 CONFIG_PACKAGE_kmod-dsa=y
 CONFIG_PACKAGE_kmod-fs-btrfs=n
 CONFIG_PACKAGE_kmod-fs-ext4=y
@@ -133,7 +133,7 @@ CONFIG_PACKAGE_nand-utils=n
 CONFIG_PACKAGE_openssh-keygen=y
 CONFIG_PACKAGE_openssh-sftp-server=y
 CONFIG_PACKAGE_openssl-util=y
-CONFIG_PACKAGE_proto-bonding=y
+CONFIG_PACKAGE_proto-bonding=n
 CONFIG_PACKAGE_sfdisk=y
 CONFIG_PACKAGE_sgdisk=y
 CONFIG_PACKAGE_usb-modeswitch=y
