@@ -15,17 +15,12 @@ https://github.com/chenxin527/uboot-ipq60xx-emmc-build
 
 https://github.com/chenxin527/uboot-ipq60xx-nor-build
 
-联发科版：
-
-https://drive.wrt.moe/uboot/mediatek
-
 # 固件简要说明
 
-固件每天早上4点自动编译。
 
 固件信息里的时间为编译开始的时间，方便核对上游源码提交时间。
 
-MEDIATEK系列、QUALCOMMAX系列、ROCKCHIP系列、X86系列。
+QUALCOMMAX系列
 
 # 目录简要说明
 
