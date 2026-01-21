@@ -108,4 +108,5 @@ CONFIG_PACKAGE_sgdisk=y
 CONFIG_PACKAGE_usb-modeswitch=y
 CONFIG_PACKAGE_usbmuxd=n
 CONFIG_PACKAGE_usbutils=y
+CONFIG_PACKAGE_xz-utils=y
 
