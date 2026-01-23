@@ -155,3 +155,6 @@ CONFIG_PACKAGE_tune2fs=y
 # 无线调节增强
 CONFIG_PACKAGE_iwinfo=y
 CONFIG_PACKAGE_luci-app-wireless-regdb=y
+#老优化，副作用大
+CONFIG_PACKAGE_skb_recycler=n
+
