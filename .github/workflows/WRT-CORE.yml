@@ -131,7 +131,7 @@ jobs:
 
             mkdir -p ./wrt/tmp && echo "1" > ./wrt/tmp/.build
 
-            echo "toolchain skiped done!"
+            echo "toolchain skipped done!"
           else
             echo "caches missed!"
           fi
@@ -205,7 +205,7 @@ jobs:
 
       - name: Package Firmware
         run: |
-          cd ./wrt/ && mkdir ./upload/
+          cd ./wrt/ && mkdir -p ./upload/
 
           cp -f ./.config ./upload/Config-"$WRT_CONFIG"-"$WRT_INFO"-"$WRT_BRANCH"-"$WRT_DATE".txt
 
@@ -226,6 +226,20 @@ jobs:
 
             make clean -j$(nproc)
           fi
+
+      - name: Build Summary
+        run: |
+          {
+            echo "## WRT Build Summary"
+            echo ""
+            echo "- Source: \`$WRT_SOURCE\`"
+            echo "- Branch: \`$WRT_BRANCH\`"
+            echo "- Config: \`$WRT_CONFIG\`"
+            echo "- Target: \`$WRT_TARGET\`"
+            echo "- Firmware mode: \`$WRT_WIFI\`"
+            echo "- Build time: \`$WRT_DATE\`"
+            echo "- Kernel: \`$WRT_KVER\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Release Firmware
         uses: softprops/action-gh-release@master
