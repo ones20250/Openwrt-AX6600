@@ -159,7 +159,7 @@ git push origin main
    # 验证 SHA256
    sha256sum -c firmware.bin.sha256
    ``
-   3. **准备恢复方案**
+3. **准备恢复方案**
    - 保留 TTL 串口工具
    - 准备原厂固件备份
    - 了解救砖流程
