@@ -1,61 +1,80 @@
-# OpenWRT AX6600 Documentation
+# 🚀 OpenWrt AX6600 / IPQ60xx Router Firmware Cloud Build (NSS Accelerated)
+OpenWrt / AX6600 / JDCloud RE-CS-02 / IPQ6010 / NSS acceleration / firmware / router / cloud build
 
-## Hardware Specifications
-- **CPU:** Qualcomm Snapdragon AX6600
-- **RAM:** 1GB
-- **Flash Memory:** 16MB
-- **Ethernet Ports:** 1x WAN, 4x LAN (Gigabit)
-- **WiFi:** Tri-band (2.4GHz x 1 + 5GHz x 2) with support for 802.11ax
-- **USB Ports:** 1x USB 3.0
-- **Dimensions:** 250mm x 200mm x 50mm
+[👉 进入项目主页](https://github.com/ones20250/Openwrt-AX6600) 适配京东云雅典娜 AX6600（JDCloud RE-CS-02）
 
-## Quick Start Guide
-1. **Download the Firmware:** Visit the official OpenWRT website to download the recommended firmware for AX6600.
-2. **Connect Your Router:** Plug the router into a power source and connect it to your modem via the WAN port.
-3. **Access Web Interface:** Use a web browser to go to `http://192.168.1.1`.
-4. **Log In:** Default credentials are `root` for the username and `admin` for the password.
-5. **Flash the Firmware:** Go to the **System > Firmware Upgrade** section and upload the downloaded firmware file.
-
-## Detailed Flashing Tutorial
-1. **Prepare Your Environment:** Ensure that you have a stable power supply and connection to your router.
-2. **Backup Your Settings:** If applicable, back up your current configuration from the router's interface. 
-3. **Upload Firmware:** In the router interface, navigate to **System > Backup / Flash Firmware**.
-4. **Select the Firmware File:** Browse to the firmware file you downloaded and click ‘Flash Image…’.
-5. **Wait for Reboot:** The router will automatically reboot after the flashing process is completed.
-6. **Restore Settings:** If you backed up settings, restore them through **System > Backup / Flash Firmware** > **Restore Backup**.
-
-## NSS Acceleration Explanation
-NSS (Network Subsystem) acceleration boosts router performance by offloading data processing tasks to specialized hardware. This results in significantly improved throughput and reduced latency for network traffic, especially under heavy loads.
-
-## Firmware Customization
-Users can customize the OpenWRT firmware by:
-- Installing additional packages from the OpenWRT repository.
-- Configuring firewall rules and network settings according to your needs.
-- Modifying QoS settings for better bandwidth management.
-
-## FAQ
-- **Q: How do I reset my router?**  
-  A: Press and hold the reset button for 10 seconds while the router is powered on.
-
-- **Q: Can I use VPN on OpenWRT AX6600?**  
-  A: Yes, OpenWRT supports various VPN protocols, including OpenVPN and WireGuard.
-
-## Performance Reference
-- **WiFi Speed Test (2.4GHz):** Up to 400 Mbps
-- **WiFi Speed Test (5GHz):** Up to 1200 Mbps
-
-## Troubleshooting Guide
-- **Issue: No Internet Access**  
-  **Solution:** Check WAN connection, and reboot the router.
-
-- **Issue: Frequent Disconnections**  
-  **Solution:** Change WiFi channel in the network settings.
-
-## Contribution Guidelines
-1. Fork the repository to your own GitHub account.
-2. Create a separate branch for your changes.
-3. Submit a pull request with a detailed description of your contributions.
+一个基于 GitHub Actions 的 OpenWrt 自动编译项目，支持 QUALCOMMAX（IPQ6010）设备。
 
 ---
 
-*For further assistance, refer to the OpenWRT community forums or documentation.*
+## ⭐ 项目特点
+
+- 🔥 OpenWrt 云编译（GitHub Actions 自动构建）
+- 📦 适配京东云雅典娜 AX6600（RE-CS-02）
+- 🚀 预装常用网络插件
+- ⚡ 支持 NSS 硬件加速（性能优化）
+- 🌐 提升 NAT / 转发 / 吞吐性能
+- 🔄 自动同步上游 OpenWrt / ImmortalWrt 源码
+- 🧩 支持自定义编译配置
+
+---
+
+## 📦 固件下载
+🚀 [👉 最新固件下载（Releases）](https://github.com/ones20250/Openwrt-AX6600/releases/latest)  
+
+---
+
+## 🛠️ 刷机教程
+
+👉 完整刷机图文教程（推荐新手参考） [点击查看教程](https://blog.waynecommand.com/post/athena-re-cs-02.html)
+
+
+1. 旧版本固件开启 SSH  
+2. 备份分区（SSH 备份 / TTL 备份）  
+3. 刷入不死 U-Boot 和双分区 GPT 分区表  
+4. 新建 storage 分区并还原跑分分区
+5. Releases刷入最新固件 
+
+⚠️ 操作存在风险，请确保了解步骤后再执行！
+
+---
+
+## 🧠 固件说明
+
+- 固件时间 = 编译开始时间（用于核对上游源码版本）
+- 默认包含基础网络功能
+- 可通过自定义配置增加插件
+- 基于 QUALCOMMAX（IPQ6010）平台
+- 针对 IPQ6010 平台进行网络性能优化
+
+---
+
+## ⚙️ 项目结构
+
+- `workflows` —— 自定义 CI 配置
+- `Scripts` —— 自定义脚本
+- `Config` —— 自定义编译配置
+
+---
+
+## 🔗 上游源码
+
+**官方版：**  
+https://github.com/immortalwrt/immortalwrt.git  
+
+**高通版：**  
+https://github.com/ones20250/immortalwrt_ipq.git  
+
+---
+
+## 🔧 U-Boot
+
+**高通版：**
+
+- https://github.com/chenxin527/uboot-ipq60xx-emmc-build  
+- https://github.com/chenxin527/uboot-ipq60xx-nor-build  
+
+---
+
+
+## ⭐ 如果这个项目对你有帮助，欢迎 Star！
