@@ -25,6 +25,9 @@ OpenWrt / AX6600 / IPQ6010 / JDCloud RE-CS-02 / NSS / Router Firmware / Cloud Bu
 
 所有编译产物都在 Releases 页面发布，选择最新版本下载。
 
+📦 **刷机相关文件（Bootloader / 工具 / 备用固件）**
+👉 **[点击下载刷机文件](https://github.com/ones20250/Openwrt-AX6600/releases/tag/Router-Flashing-Files)**
+
 ---
 
 ## 🛠️ 刷机指南
