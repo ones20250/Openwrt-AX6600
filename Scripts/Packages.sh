@@ -66,7 +66,6 @@ UPDATE_PACKAGE() {
 #UPDATE_PACKAGE "ddns-go" "sirpdboy/luci-app-ddns-go" "main"
 #UPDATE_PACKAGE "diskman" "lisaac/luci-app-diskman" "master"
 #UPDATE_PACKAGE "easytier" "EasyTier/luci-app-easytier" "main"
-#UPDATE_PACKAGE "fancontrol" "rockjake/luci-app-fancontrol" "main"
 #UPDATE_PACKAGE "gecoosac" "laipeng668/luci-app-gecoosac" "main"
 #UPDATE_PACKAGE "netspeedtest" "sirpdboy/netspeedtest" "main" "" "homebox speedtest"
 #UPDATE_PACKAGE "openlist2" "sbwml/luci-app-openlist2" "main"
