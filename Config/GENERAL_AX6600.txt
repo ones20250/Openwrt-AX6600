@@ -85,9 +85,9 @@ CONFIG_PACKAGE_kmod-usb-net-cdc-subset=n
 CONFIG_PACKAGE_kmod-usb-net-huawei-cdc-ncm=n
 # iPhone USB 共享
 CONFIG_PACKAGE_kmod-usb-net-ipheth=n
-CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=n
-CONFIG_PACKAGE_kmod-usb-net-qmi-wwan-fibocom=n
-CONFIG_PACKAGE_kmod-usb-net-qmi-wwan-quectel=n
+CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y
+CONFIG_PACKAGE_kmod-usb-net-qmi-wwan-fibocom=y
+CONFIG_PACKAGE_kmod-usb-net-qmi-wwan-quectel=y
 # 安卓 RNDIS 共享
 CONFIG_PACKAGE_kmod-usb-net-rndis=n
 CONFIG_PACKAGE_kmod-usb-net-rtl8150=n
