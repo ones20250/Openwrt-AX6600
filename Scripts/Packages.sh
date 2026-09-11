@@ -6,19 +6,14 @@ UPDATE_PACKAGE() {
 	local PKG_REPO=$2
 	local PKG_BRANCH=$3
 	local PKG_SPECIAL=$4
-	local PKG_LIST=("$PKG_NAME" $5)  # 第5个参数为自定义名称列表
+	local PKG_LIST=("$PKG_NAME" $5)
 	local REPO_NAME=${PKG_REPO#*/}
 
 	echo " "
-
-	# 删除本地可能存在的不同名称的软件包
 	for NAME in "${PKG_LIST[@]}"; do
-		# 查找匹配的目录
 		echo "Search directory: $NAME"
 		local FOUND_DIRS
 		FOUND_DIRS=$(find ../feeds/luci/ ../feeds/packages/ -maxdepth 3 -type d -iname "*$NAME*" 2>/dev/null)
-
-		# 删除找到的目录
 		if [ -n "$FOUND_DIRS" ]; then
 			while read -r DIR; do
 				rm -rf "$DIR"
@@ -29,7 +24,6 @@ UPDATE_PACKAGE() {
 		fi
 	done
 
-	# 克隆 GitHub 仓库
 	git clone --depth=1 --single-branch --branch "$PKG_BRANCH" "https://github.com/$PKG_REPO.git"
 
 	local PKG_COMMIT
@@ -38,7 +32,6 @@ UPDATE_PACKAGE() {
 		echo "$PKG_NAME $PKG_REPO $PKG_BRANCH $PKG_COMMIT" >> "$GITHUB_WORKSPACE/package-versions.txt"
 	fi
 
-	# 处理克隆的仓库
 	if [[ "$PKG_SPECIAL" == "pkg" ]]; then
 		find "./$REPO_NAME"/*/ -maxdepth 3 -type d -iname "*$PKG_NAME*" -prune -exec cp -rf {} ./ \;
 		rm -rf "./$REPO_NAME/"
@@ -47,27 +40,26 @@ UPDATE_PACKAGE() {
 	fi
 }
 
-# 调用示例
-# UPDATE_PACKAGE "OpenAppFilter" "destan19/OpenAppFilter" "master" "" "custom_name1 custom_name2"
-# UPDATE_PACKAGE "包名" "项目地址" "项目分支" "pkg/name，可选，pkg为从大杂烩中单独提取包名插件；name为重命名为包名"
-
-# 主题：Aurora
+# 第三方主题
 UPDATE_PACKAGE "aurora" "eamonxg/luci-theme-aurora" "main"
 
-# Athena LED：JDC AX6600 点阵屏驱动及 LuCI 插件
+# JDC AX6600 Athena LED：仓库包含 athena-led + luci-app-athena-led 两个 OpenWrt 包
 UPDATE_PACKAGE "athena-led" "unraveloop/JDC-AX6600-Athena-LED-Controller" "main" "pkg"
+UPDATE_PACKAGE "luci-app-athena-led" "unraveloop/JDC-AX6600-Athena-LED-Controller" "main" "pkg"
 
-# Bandix Plus：后端 + LuCI 前端；本固件仅作为流量观察使用，不启用限速/QoS
-UPDATE_PACKAGE "bandix-plus" "timsaya/luci-app-bandix-plus" "main" "pkg"
+# Bandix Plus：前端与后端分别来自两个仓库
 UPDATE_PACKAGE "bandix-plus" "timsaya/openwrt-bandix-plus" "main" "pkg"
+UPDATE_PACKAGE "luci-app-bandix-plus" "timsaya/luci-app-bandix-plus" "main" "pkg"
 
-# dae / daed：透明代理运行时、Web 管理界面及相关内核能力
+# dae / daed / LuCI：从同一仓库提取对应包
 UPDATE_PACKAGE "dae" "kenzok8/openwrt-daede" "main" "pkg"
+UPDATE_PACKAGE "daed" "kenzok8/openwrt-daede" "main" "pkg"
+UPDATE_PACKAGE "luci-app-daede" "kenzok8/openwrt-daede" "main" "pkg"
 
-# Podman LuCI 管理面板；Podman 本体及依赖由当前 OpenWrt packages feed 提供
-UPDATE_PACKAGE "podman" "Zerogiven-OpenWRT-Packages/luci-app-podman" "main" "pkg"
+# Podman LuCI 管理面板。仓库根目录本身就是 OpenWrt 包，不使用 pkg 模式。
+UPDATE_PACKAGE "luci-app-podman" "Zerogiven-OpenWRT-Packages/luci-app-podman" "main"
 
-# DNS 分流：mosdns LuCI 及运行时；smartdns/dnsmasq 使用底层 feed 中的兼容版本
+# DNS：mosdns LuCI/运行时；smartdns/dnsmasq 使用当前 OpenWrt feed 的兼容版本。
 UPDATE_PACKAGE "mosdns" "sbwml/luci-app-mosdns" "v5" "" "v2dat"
 
 if [[ "${WRT_PROFILE^^}" == "PLUS" ]]; then
@@ -89,31 +81,23 @@ UPDATE_VERSION() {
 	fi
 
 	echo -e "\n$PKG_NAME version update has started!"
-
 	for PKG_FILE in $PKG_FILES; do
 		local PKG_REPO=$(grep -Po "PKG_SOURCE_URL:=https://.*github.com/\K[^/]+/[^/]+(?=.*)" $PKG_FILE)
 		local PKG_TAG=$(curl -sL "https://api.github.com/repos/$PKG_REPO/releases" | jq -r "map(select(.prerelease == $PKG_MARK)) | first | .tag_name")
-
 		local OLD_VER=$(grep -Po "PKG_VERSION:=\K.*" "$PKG_FILE")
 		local OLD_URL=$(grep -Po "PKG_SOURCE_URL:=\K.*" "$PKG_FILE")
 		local OLD_FILE=$(grep -Po "PKG_SOURCE:=\K.*" "$PKG_FILE")
 		local OLD_HASH=$(grep -Po "PKG_HASH:=\K.*" "$PKG_FILE")
-
 		local PKG_URL=$([[ "$OLD_URL" == *"releases"* ]] && echo "${OLD_URL%/}/$OLD_FILE" || echo "${OLD_URL%/}")
-
 		local NEW_VER=$(echo $PKG_TAG | sed -E 's/[^0-9]+/\./g; s/^\.|\.$//g')
 		local NEW_URL=$(echo $PKG_URL | sed "s/\$(PKG_VERSION)/$NEW_VER/g; s/\$(PKG_NAME)/$PKG_NAME/g")
 		local NEW_HASH=$(curl -sL "$NEW_URL" | sha256sum | cut -d ' ' -f 1)
-
 		echo "old version: $OLD_VER $OLD_HASH"
 		echo "new version: $NEW_VER $NEW_HASH"
-
 		if [[ "$NEW_VER" =~ ^[0-9].* ]] && dpkg --compare-versions "$OLD_VER" lt "$NEW_VER"; then
 			sed -i "s/PKG_VERSION:=.*/PKG_VERSION:=$NEW_VER/g" "$PKG_FILE"
 			sed -i "s/PKG_HASH:=.*/PKG_HASH:=$NEW_HASH/g" "$PKG_FILE"
 			echo "$PKG_FILE version has been updated!"
-		else
-			echo "$PKG_FILE version is already the latest!"
 		fi
 	done
 }
