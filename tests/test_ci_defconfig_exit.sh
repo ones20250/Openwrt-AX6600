@@ -7,7 +7,20 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 WORKFLOW_FILE="$REPO_ROOT/.github/workflows/WRT-CORE.yml"
-BASH_BIN="${BASH:-bash}"
+BASH_BIN="${BASH:-}"
+if [ -z "$BASH_BIN" ] || ! "$BASH_BIN" -c "true" 2>/dev/null; then
+    if command -v bash >/dev/null 2>&1 && bash -c "true" 2>/dev/null; then
+        BASH_BIN="bash"
+    elif [ -x "/bin/bash" ]; then
+        BASH_BIN="/bin/bash"
+    elif [ -x "/usr/bin/bash" ]; then
+        BASH_BIN="/usr/bin/bash"
+    elif [ -x "C:/Program Files/Git/bin/bash.exe" ]; then
+        BASH_BIN="C:/Program Files/Git/bin/bash.exe"
+    else
+        BASH_BIN="sh"
+    fi
+fi
 
 echo "=== Running CI Regression Test: defconfig Exit Code 42 Termination ==="
 

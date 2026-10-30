@@ -8,7 +8,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 echo "=== Running wolultra configuration and CI assertion regression test ==="
 
 # 1. 检查 Config/GENERAL_AX6600.txt
-echo "--- Test 1: Verify Config/GENERAL_AX6600.txt has no wolplus or wolultra (PURE remains pure) ---"
+echo "--- Test 1: Verify Config/GENERAL_AX6600.txt has no wolplus, wolultra or partexp (PURE remains pure) ---"
 if grep -q "CONFIG_PACKAGE_luci-app-wolplus" "$REPO_ROOT/Config/GENERAL_AX6600.txt"; then
     echo "FAIL: Found leftover wolplus in Config/GENERAL_AX6600.txt!" >&2
     exit 1
@@ -17,7 +17,11 @@ if grep -q "CONFIG_PACKAGE_luci-app-wolultra" "$REPO_ROOT/Config/GENERAL_AX6600.
     echo "FAIL: Found wolultra in Config/GENERAL_AX6600.txt! PURE must not integrate wolultra." >&2
     exit 1
 fi
-echo "PASS: Config/GENERAL_AX6600.txt is clean of wolplus and wolultra."
+if grep -q "CONFIG_PACKAGE_luci-app-partexp" "$REPO_ROOT/Config/GENERAL_AX6600.txt"; then
+    echo "FAIL: Found partexp in Config/GENERAL_AX6600.txt! PURE must not integrate partexp." >&2
+    exit 1
+fi
+echo "PASS: Config/GENERAL_AX6600.txt is clean of wolplus, wolultra and partexp."
 
 # 2. 检查 Config/GENERAL_AX6600_PLUS.txt
 echo "--- Test 2: Verify Config/GENERAL_AX6600_PLUS.txt contains CONFIG_PACKAGE_luci-app-wolultra=y ---"
@@ -32,12 +36,16 @@ fi
 echo "PASS: Config/GENERAL_AX6600_PLUS.txt correctly specifies wolultra and removes wolplus."
 
 # 3. 检查 Scripts/Packages.sh
-echo "--- Test 3: Verify Scripts/Packages.sh viking cleanup list contains luci-app-wolultra ---"
+echo "--- Test 3: Verify Scripts/Packages.sh viking cleanup list contains both wolplus and wolultra ---"
 if ! grep -E 'UPDATE_PACKAGE "viking" "ones20250/packages" "main" "" "[^"]*luci-app-wolultra[^"]*"' "$REPO_ROOT/Scripts/Packages.sh" >/dev/null; then
     echo "FAIL: Active viking UPDATE_PACKAGE in Scripts/Packages.sh does not include luci-app-wolultra in cleanup list!" >&2
     exit 1
 fi
-echo "PASS: Scripts/Packages.sh correctly includes luci-app-wolultra in viking cleanup list."
+if ! grep -E 'UPDATE_PACKAGE "viking" "ones20250/packages" "main" "" "[^"]*luci-app-wolplus[^"]*"' "$REPO_ROOT/Scripts/Packages.sh" >/dev/null; then
+    echo "FAIL: Active viking UPDATE_PACKAGE in Scripts/Packages.sh must retain legacy luci-app-wolplus in cleanup list to purge upstream feeds!" >&2
+    exit 1
+fi
+echo "PASS: Scripts/Packages.sh correctly includes both luci-app-wolplus and luci-app-wolultra in viking cleanup list."
 
 # 4. 检查 README.md
 echo "--- Test 4: Verify README.md mentions wolultra and has no leftover wolplus ---"
@@ -62,7 +70,20 @@ fi
 TMP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t 'wol_test')"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-BASH_BIN="${BASH:-bash}"
+BASH_BIN="${BASH:-}"
+if [ -z "$BASH_BIN" ] || ! "$BASH_BIN" -c "true" 2>/dev/null; then
+    if command -v bash >/dev/null 2>&1 && bash -c "true" 2>/dev/null; then
+        BASH_BIN="bash"
+    elif [ -x "/bin/bash" ]; then
+        BASH_BIN="/bin/bash"
+    elif [ -x "/usr/bin/bash" ]; then
+        BASH_BIN="/usr/bin/bash"
+    elif [ -x "C:/Program Files/Git/bin/bash.exe" ]; then
+        BASH_BIN="C:/Program Files/Git/bin/bash.exe"
+    else
+        BASH_BIN="sh"
+    fi
+fi
 
 # 动态模拟 CI 断言逻辑：提取 PLUS 插件断言块（基于语义锚点，避免硬编码行号因文件改动失效）
 ASSERT_SNIPPET="$(awk '/# 5\. PLUS 核心插件入选断言/{flag=1; next} flag && /if \[\[.*FAIL/{flag=0} flag' "$WORKFLOW_FILE")"
