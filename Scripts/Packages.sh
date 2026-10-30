@@ -71,10 +71,11 @@ if [[ "${WRT_PROFILE^^}" == "PLUS" ]]; then
 	# 分区扩容与网络唤醒：源码仅 PLUS 版拉取，PURE 中同名 =y 配置因无源码自动失效
 	UPDATE_PACKAGE "partexp" "sirpdboy/luci-app-partexp" "main"
 	UPDATE_PACKAGE "viking" "ones20250/packages" "main" "" "luci-app-timewol luci-app-wolplus"
+	
 fi
 
 #UPDATE_PACKAGE "mosdns" "sbwml/luci-app-mosdns" "v5" "" "v2dat"
-
+#UPDATE_PACKAGE "luci-app-tailscale" "asvow/luci-app-tailscale" "main"
 #UPDATE_PACKAGE "luci-app-tailscale" "asvow/luci-app-tailscale" "main"
 
 #UPDATE_PACKAGE "ddns-go" "sirpdboy/luci-app-ddns-go" "main"

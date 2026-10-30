@@ -62,12 +62,18 @@ CONFIG_PACKAGE_dnsmasq_full_nftset=y
 CONFIG_PACKAGE_dnsmasq_full_ipset=n
 
 # AdGuard Home
-CONFIG_PACKAGE_luci-app-adguardhome=y
-CONFIG_PACKAGE_adguardhome=y
+# CONFIG_PACKAGE_luci-app-adguardhome=y
+# CONFIG_PACKAGE_adguardhome=y
 
 # 实用工具（对应源码由 Packages.sh 在 PLUS 版克隆）
 CONFIG_PACKAGE_luci-app-partexp=y
 CONFIG_PACKAGE_luci-app-wolplus=y
+CONFIG_PACKAGE_luci-app-acl=y
+CONFIG_PACKAGE_luci-app-frpc=y
+CONFIG_PACKAGE_luci-app-syncthing=y
+CONFIG_PACKAGE_luci-app-zerotier=y
+CONFIG_PACKAGE_luci-app-tailscale=y
+CONFIG_PACKAGE_luci-app-tailscale-community=y
 
 # 实用工具（来自官方 feeds；samba4 文件共享已在通用配置 GENERAL_AX6600.txt 中启用）
 # 终端（网页 SSH）

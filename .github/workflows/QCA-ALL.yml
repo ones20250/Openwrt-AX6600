@@ -33,7 +33,7 @@ jobs:
       #max-parallel: 3
       matrix:
         CONFIG: [IPQ60XX-WIFI-YES]
-        PROFILE: [PURE, PLUS]
+        PROFILE: [PLUS]
         SOURCE: [ones20250/immortalwrt_ipq]
         BRANCH: [owrt]
 

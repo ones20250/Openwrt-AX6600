@@ -1,8 +1,5 @@
 blank_issues_enabled: false
 contact_links:
-  - name: 📖 刷机 / 救砖 / 备份分区教程
-    url: https://github.com/ones20250/Openwrt-AX6600/blob/main/Docs/刷机救砖教程.md
-    about: 刷机操作、变砖恢复、TTL/分区备份等问题请先看教程
   - name: 📥 固件下载（PURE / PLUS）
     url: https://github.com/ones20250/Openwrt-AX6600#readme
-    about: 两个版本的区别、下载入口和 WiFi 推荐设置见 README
+    
