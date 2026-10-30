@@ -280,7 +280,7 @@ jobs:
 
           # 5. PLUS 核心插件入选断言 (当 WRT_PROFILE 为 PLUS 时)
           if [[ "${WRT_PROFILE_UPPER:-${WRT_PROFILE}}" == "PLUS" ]]; then
-            for PKG in luci-app-passwall2 luci-app-openclash luci-app-dockerman luci-app-adguardhome; do
+            for PKG in luci-app-passwall2 luci-app-openclash luci-app-dockerman luci-app-adguardhome luci-app-wolultra; do
               if ! grep -q "^CONFIG_PACKAGE_${PKG}=y" .config; then
                 echo "::error::断言失败: PLUS 核心插件 ${PKG} 未实际入选！"
                 FAIL=1

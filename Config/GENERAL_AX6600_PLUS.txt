@@ -67,7 +67,7 @@ CONFIG_PACKAGE_adguardhome=y
 
 # 实用工具（对应源码由 Packages.sh 在 PLUS 版克隆）
 CONFIG_PACKAGE_luci-app-partexp=y
-CONFIG_PACKAGE_luci-app-wolplus=y
+CONFIG_PACKAGE_luci-app-wolultra=y
 
 # 实用工具（来自官方 feeds；samba4 文件共享已在通用配置 GENERAL_AX6600.txt 中启用）
 # 终端（网页 SSH）

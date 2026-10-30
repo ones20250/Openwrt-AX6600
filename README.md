@@ -63,7 +63,7 @@ OpenWrt / AX6600 / IPQ6010 / JDCloud RE-CS-02 / PPE / Router Firmware / Cloud Bu
 | 版本 | 适合人群 | 预置内容 |
 |------|----------|----------|
 | `PURE` 纯净版 | 希望系统轻量、稳定，按需自行安装插件的用户 | 保持当前配置，预装基础网络与常用管理插件 |
-| `PLUS` 版 | 希望刷完即用常见扩展服务的用户 | 在纯净版基础上增加 OpenClash、PassWall2、Docker / Dockerman、AdGuard Home、DDNS、ttyd 终端、UPnP，以及分区扩容（partexp）、网络唤醒（wolplus）等实用插件 |
+| `PLUS` 版 | 希望刷完即用常见扩展服务的用户 | 在纯净版基础上增加 OpenClash、PassWall2、Docker / Dockerman、AdGuard Home、DDNS、ttyd 终端、UPnP，以及分区扩容（partexp）、网络唤醒（wolultra）等实用插件 |
 
 > 💡 Releases 中的文件名会包含 `pure` 或 `plus`，请按需求下载对应版本。
 
