@@ -6,14 +6,15 @@ CONFIG_PACKAGE_luci-app-netspeedtest=n
 CONFIG_PACKAGE_luci-app-partexp=y
 CONFIG_PACKAGE_luci-app-samba4=y
 #CONFIG_PACKAGE_luci-app-sqm=y
-#CONFIG_PACKAGE_sqm-scripts-nss=y
 CONFIG_PACKAGE_luci-app-wolplus=y
 CONFIG_PACKAGE_luci-app-sentinel=y
 CONFIG_PACKAGE_luci-app-arpbind=y
-CONFIG_PACKAGE_luci-app-firewall=n
-CONFIG_PACKAGE_luci-app-firewall4=y
+CONFIG_PACKAGE_luci-app-firewall=y
 CONFIG_PACKAGE_firewall4=y
 CONFIG_PACKAGE_luci-app-tailscale=y
+CONFIG_PACKAGE_fullconenat-sonic=y
+CONFIG_PACKAGE_luci-app-fullconenat-sonic=y
+
 CONFIG_PACKAGE_kmod-nf-ipt=n
 CONFIG_PACKAGE_iptables=n
 
@@ -25,21 +26,16 @@ CONFIG_PACKAGE_luci-app-upnp=n
 
 #参数调整
 CONFIG_CCACHE=y
-CONFIG_DEVEL=n
+CONFIG_DEVEL=y
 CONFIG_KERNEL_CC_OPTIMIZE_FOR_PERFORMANCE=y
+CONFIG_FEED_video=n
+CONFIG_FEED_pon_drivers=n
+CONFIG_FEED_pon_userspace=n
 #支持同一平台下的多个设备型号 我只生成一个固件
 CONFIG_TARGET_MULTI_PROFILE=y
 CONFIG_TARGET_PER_DEVICE_ROOTFS=y
 CONFIG_TARGET_ROOTFS_INITRAMFS=n
-CONFIG_ATH11K_MEM_PROFILE_1G=y
 CONFIG_IPQ_MEM_PROFILE_1024=y
-CONFIG_PACKAGE_kmod-qca-nss-drv=y
-CONFIG_PACKAGE_kmod-qca-nss-ecm=y
-CONFIG_PACKAGE_kmod-qca-nss-drv-pppoe=y
-CONFIG_PACKAGE_kmod-qca-nss-drv-qdisc=y
-CONFIG_PACKAGE_kmod-qca-nss-drv-map-t=y
-CONFIG_PACKAGE_kmod-qca-nss-drv-bridge-mgr=y
-CONFIG_PACKAGE_kmod-qca-nss-drv-vlan-mgr=y
 #内核调整
 CONFIG_PACKAGE_kmod-bonding=n
 CONFIG_PACKAGE_kmod-dsa=y
@@ -50,7 +46,8 @@ CONFIG_PACKAGE_kmod-inet-diag=y
 CONFIG_PACKAGE_kmod-inet-mptcp-diag=n
 CONFIG_PACKAGE_kmod-mtd-rw=n
 CONFIG_PACKAGE_kmod-netlink-diag=n
-CONFIG_PACKAGE_kmod-nf-nat6=n
+CONFIG_PACKAGE_kmod-nf-nat=y
+CONFIG_PACKAGE_kmod-nf-nat6=y
 CONFIG_PACKAGE_kmod-nf-nathelper=n
 CONFIG_PACKAGE_kmod-nft-arp=n
 CONFIG_PACKAGE_kmod-nft-bridge=y
@@ -59,10 +56,9 @@ CONFIG_PACKAGE_kmod-nft-connlimit=n
 CONFIG_PACKAGE_kmod-nft-core=y
 CONFIG_PACKAGE_kmod-nft-dup-inet=n
 CONFIG_PACKAGE_kmod-nft-fib=y
-CONFIG_PACKAGE_kmod-nft-fullcone=n
-CONFIG_PACKAGE_kmod-nft-nat=n
-CONFIG_PACKAGE_kmod-nft-netdev=n
-CONFIG_PACKAGE_kmod-nft-offload=n
+CONFIG_PACKAGE_kmod-nft-nat=y
+CONFIG_PACKAGE_kmod-nft-netdev=y
+CONFIG_PACKAGE_kmod-nft-offload=y
 CONFIG_PACKAGE_kmod-nft-queue=n
 CONFIG_PACKAGE_kmod-nft-socket=y
 CONFIG_PACKAGE_kmod-nft-tproxy=y
@@ -149,7 +145,6 @@ CONFIG_PACKAGE_usbutils=y
 
 # 雅典娜 LED 点阵屏驱动及插件
 CONFIG_PACKAGE_luci-app-athena-led=y
-CONFIG_PACKAGE_athena-led-control=y
 
 # 建议开启自动挂载，方便识别 eMMC 分区
 CONFIG_PACKAGE_block-mount=y

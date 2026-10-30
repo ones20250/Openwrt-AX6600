@@ -67,10 +67,9 @@ jobs:
     name: ${{inputs.WRT_SOURCE}}
     runs-on: ubuntu-latest
     outputs:
-      cache_prefix: ${{steps.initialize-values.outputs.cache_prefix}}
-      legacy_cache_prefix: ${{steps.initialize-values.outputs.legacy_cache_prefix}}
-      cache_key: ${{steps.clone-code.outputs.cache_key}}
-      source_hash: ${{steps.clone-code.outputs.source_hash}}
+      cache_prefix: ${{steps.initialize-cache.outputs.cache_prefix}}
+      cache_key: ${{steps.initialize-cache.outputs.cache_key}}
+      cache_started: ${{steps.initialize-cache.outputs.cache_started}}
     steps:
       - name: Checkout Projects
         uses: actions/checkout@v4
@@ -79,23 +78,29 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo -E apt -yqq purge firefox
-          sudo -E apt -yqq update
-          sudo -E apt -yqq full-upgrade
-          sudo -E apt -yqq autoremove --purge
-          sudo -E apt -yqq autoclean
-          sudo -E apt -yqq clean
-          sudo -E apt -yqq install dos2unix libfuse-dev libncurses-dev libncurses6 libxml2 python3-setools python3-setuptools
-          sudo bash -c 'bash <(curl -sL https://build-scripts.immortalwrt.org/init_build_environment.sh)'
-          sudo -E systemctl daemon-reload
-          sudo -E timedatectl set-timezone "Asia/Shanghai"
+          sudo apt-get -yqq purge firefox
+          sudo apt-get -yqq update
+          sudo apt-get -yqq full-upgrade
+          sudo apt-get -yqq autoremove --purge
+          sudo apt-get -yqq autoclean
+          sudo apt-get -yqq clean
+
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential bzip2 ca-certificates ccache clang \
+            cmake cpio curl device-tree-compiler dos2unix file flex \
+            g++-multilib gawk gcc-multilib genisoimage gettext git jq \
+            libbpf-dev libclang-dev libdw-dev libelf-dev libncurses-dev libssl-dev lld \
+            llvm ninja-build patch perl pkgconf python3 python3-cryptography \
+            python3-dev python3-packaging python3-pyelftools python3-setuptools qemu-utils rsync swig \
+            unzip wget xz-utils zlib1g-dev zstd
+
+          sudo timedatectl set-timezone "Asia/Shanghai"
 
           sudo mkdir -p /mnt/build_wrt
           sudo chown $USER:$USER /mnt/build_wrt
           sudo ln -s /mnt/build_wrt $GITHUB_WORKSPACE/wrt
 
       - name: Initialization Values
-        id: initialize-values
         run: |
           echo "WRT_DATE=$(TZ=UTC-8 date +"%y.%m.%d-%H.%M.%S")" >> $GITHUB_ENV
           echo "WRT_MARK=${GITHUB_REPOSITORY%%/*}" >> $GITHUB_ENV
@@ -113,38 +118,16 @@ jobs:
           WRT_INFO="${WRT_SOURCE%%/*}"
           echo "WRT_INFO=$WRT_INFO" >> $GITHUB_ENV
           echo "WRT_TARGET=$(grep -m 1 -oP '^CONFIG_TARGET_\K[\w]+(?=\=y)' ./Config/$WRT_CONFIG.txt)" >> $GITHUB_ENV
-          WRT_CACHE_ARCH=$(awk -F= '
-            /^CONFIG_TARGET_[^=]+=y$/ {
-              name=$1; sub(/^CONFIG_TARGET_/, "", name)
-              if (name !~ /^DEVICE_/ && name != "ALL_PROFILES") {
-                if (target == "") target=name; else if (subtarget == "") subtarget=name
-              }
-            }
-            END { if (target == "" || subtarget == "") exit 1; print target "-" subtarget }
-          ' ./Config/$WRT_CONFIG.txt)
-          WRT_CACHE_SOURCE=${WRT_SOURCE//\//-}
-          WRT_CACHE_BRANCH=${WRT_BRANCH//\//-}
-          echo "WRT_CACHE_ARCH=$WRT_CACHE_ARCH" >> $GITHUB_ENV
-          echo "WRT_CACHE_PREFIX=wrt-$WRT_CACHE_SOURCE-$WRT_CACHE_BRANCH-$WRT_CACHE_ARCH" >> $GITHUB_ENV
-          echo "WRT_LEGACY_CACHE_PREFIX=$WRT_CONFIG-$WRT_INFO" >> $GITHUB_ENV
-          echo "cache_prefix=wrt-$WRT_CACHE_SOURCE-$WRT_CACHE_BRANCH-$WRT_CACHE_ARCH" >> "$GITHUB_OUTPUT"
-          echo "legacy_cache_prefix=$WRT_CONFIG-$WRT_INFO" >> "$GITHUB_OUTPUT"
           echo "WRT_WIFI=wifi-yes" >> $GITHUB_ENV
           echo "WRT_EXTRA_CONFIG=$([[ -f ./Config/GENERAL_AX6600_${WRT_PROFILE_UPPER}.txt ]] && echo ./Config/GENERAL_AX6600_${WRT_PROFILE_UPPER}.txt || true)" >> $GITHUB_ENV
           echo "WRT_KVER=none" >> $GITHUB_ENV
           echo "WRT_LIST=none" >> $GITHUB_ENV
 
       - name: Clone Code
-        id: clone-code
         run: |
           git clone --depth=1 --single-branch --branch $WRT_BRANCH $WRT_REPO ./wrt/
 
-          cd ./wrt/
-          WRT_HASH=$(git rev-parse HEAD)
-          echo "WRT_HASH=$WRT_HASH" >> $GITHUB_ENV
-          echo "WRT_CACHE_KEY=$WRT_CACHE_PREFIX-$WRT_HASH" >> $GITHUB_ENV
-          echo "cache_key=$WRT_CACHE_PREFIX-$WRT_HASH" >> "$GITHUB_OUTPUT"
-          echo "source_hash=$WRT_HASH" >> "$GITHUB_OUTPUT"
+          cd ./wrt/ && echo "WRT_HASH=$(git log -1 --pretty=format:'%h')" >> $GITHUB_ENV
 
           # GitHub Action 移除国内下载源
           PROJECT_MIRRORS_FILE="./scripts/projectsmirrors.json"
@@ -162,30 +145,58 @@ jobs:
         run: |
           find ./ -maxdepth 3 -type f -iregex ".*\(txt\|sh\)$" -exec dos2unix {} \; -exec chmod +x {} \;
 
+      # Cache lifecycle adapted from VIKINGYFY/OpenWRT-CI (MIT, Copyright 2026 VIKINGYFY).
+      - name: Initialize Cache Values
+        id: initialize-cache
+        if: env.WRT_TEST != 'true'
+        run: |
+          WRT_SUBTARGET=$(grep -m 1 -oP "^CONFIG_TARGET_${WRT_TARGET}_\K[\w]+(?=\=y)" "./Config/$WRT_CONFIG.txt")
+          WRT_CACHE_SOURCE=${WRT_SOURCE//\//-}
+          WRT_CACHE_BRANCH=${WRT_BRANCH//\//-}
+          # 保留配置名隔离；PURE/PLUS 不加入键，继续共用缓存。
+          WRT_CACHE_PREFIX="wrt-$WRT_CACHE_SOURCE-$WRT_CACHE_BRANCH-$WRT_TARGET-$WRT_SUBTARGET-$WRT_CONFIG"
+          WRT_CACHE_KEY="$WRT_CACHE_PREFIX-$(git -C ./wrt rev-parse HEAD)"
+          WRT_CACHE_STARTED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          {
+            echo "WRT_CACHE_PREFIX=$WRT_CACHE_PREFIX"
+            echo "WRT_CACHE_KEY=$WRT_CACHE_KEY"
+          } >> "$GITHUB_ENV"
+          {
+            echo "cache_prefix=$WRT_CACHE_PREFIX"
+            echo "cache_key=$WRT_CACHE_KEY"
+            echo "cache_started=$WRT_CACHE_STARTED"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Restore Build Cache
-        id: cache-restore
-        if: ${{ !inputs.WRT_TEST }}
+        id: check-cache
+        if: env.WRT_TEST != 'true'
         uses: actions/cache/restore@v4
         with:
           # 缓存内容（ccache/宿主工具/工具链）与 profile 无关，PURE 和 PLUS 共享同一份，避免缓存翻倍挤占配额
           key: ${{env.WRT_CACHE_KEY}}
+          # 迁移时仅回退到同一源码提交的旧键，避免旧前缀混用其他分支。
           restore-keys: |
             ${{env.WRT_CACHE_PREFIX}}-
-            ${{env.WRT_LEGACY_CACHE_PREFIX}}-
+            ${{env.WRT_CONFIG}}-${{env.WRT_INFO}}-${{env.WRT_HASH}}
           path: |
             ./wrt/.ccache
             ./wrt/staging_dir/host*
             ./wrt/staging_dir/tool*
 
       - name: Prepare Restored Build Cache
-        if: ${{ !inputs.WRT_TEST && steps.cache-restore.outputs.cache-matched-key != '' }}
+        if: env.WRT_TEST != 'true' && steps.check-cache.outputs.cache-matched-key != ''
         run: |
-          find "./wrt/staging_dir" -type d -name "stamp" -not -path "*target*" | while read -r DIR; do
-            find "$DIR" -type f -exec touch {} +
-          done
-          mkdir -p ./wrt/tmp
-          echo "1" > ./wrt/tmp/.build
-          echo "restored build cache: ${{steps.cache-restore.outputs.cache-matched-key}}"
+          if [ -d "./wrt/staging_dir" ]; then
+            find "./wrt/staging_dir" -type d -name "stamp" -not -path "*target*" | while read -r DIR; do
+              find "$DIR" -type f -exec touch {} +
+            done
+
+            mkdir -p ./wrt/tmp && echo "1" > ./wrt/tmp/.build
+
+            echo "toolchain skipped done!"
+          else
+            echo "caches missed!"
+          fi
 
       - name: Update Feeds
         run: |
@@ -215,6 +226,9 @@ jobs:
           fi
           #$GITHUB_WORKSPACE/Scripts/Handles.sh
 
+          cd $GITHUB_WORKSPACE/wrt/
+          $GITHUB_WORKSPACE/.github/scripts/prepare-i2c-tools.sh
+
       - name: Custom Settings
         run: |
           cd ./wrt/
@@ -227,8 +241,65 @@ jobs:
           fi
 
           $GITHUB_WORKSPACE/Scripts/Settings.sh
+          $GITHUB_WORKSPACE/.github/scripts/prepare-build-host.sh
 
-          make defconfig -j$(nproc) && make clean -j$(nproc)
+          make defconfig -j$(nproc)
+          make clean -j$(nproc)
+
+          echo "=== 正在执行 .config 配置断言校验 ==="
+          FAIL=0
+
+          # 1. 检查 SONiC FullCone 是否入选
+          if ! grep -q "^CONFIG_PACKAGE_fullconenat-sonic=y" .config; then
+            echo "::error::断言失败: CONFIG_PACKAGE_fullconenat-sonic 未入选！"
+            FAIL=1
+          fi
+
+          # 2. 检查旧版 NSS 模块是否有残留
+          if grep -q "^CONFIG_PACKAGE_kmod-qca-nss-" .config; then
+            echo "::error::断言失败: 发现旧版 NSS 模块残留！"
+            grep "^CONFIG_PACKAGE_kmod-qca-nss-" .config
+            FAIL=1
+          fi
+
+          # 3. 检查旧版 FullCone 是否有残留冲突
+          if grep -q "^CONFIG_PACKAGE_kmod-nft-fullcone=y" .config; then
+            echo "::error::断言失败: 发现旧版 kmod-nft-fullcone 残留冲突！"
+            FAIL=1
+          fi
+
+          # 4. 检查 PPE 硬件流表与 LuCI 防火墙核心
+          if ! grep -q "^CONFIG_PACKAGE_kmod-nft-offload=y" .config; then
+            echo "::error::断言失败: CONFIG_PACKAGE_kmod-nft-offload 未入选！"
+            FAIL=1
+          fi
+          if ! grep -q "^CONFIG_PACKAGE_luci-app-firewall=y" .config; then
+            echo "::error::断言失败: CONFIG_PACKAGE_luci-app-firewall 未入选！"
+            FAIL=1
+          fi
+
+          # 5. PLUS 核心插件入选断言 (当 WRT_PROFILE 为 PLUS 时)
+          if [[ "${WRT_PROFILE_UPPER:-${WRT_PROFILE}}" == "PLUS" ]]; then
+            for PKG in luci-app-passwall2 luci-app-openclash luci-app-dockerman luci-app-adguardhome; do
+              if ! grep -q "^CONFIG_PACKAGE_${PKG}=y" .config; then
+                echo "::error::断言失败: PLUS 核心插件 ${PKG} 未实际入选！"
+                FAIL=1
+              fi
+            done
+          fi
+
+          if [[ $FAIL -ne 0 ]]; then
+            echo "::error::配置断言校验失败，终止构建！"
+            exit 1
+          fi
+          echo "=== .config 配置断言校验全部通过 ==="
+
+      - name: Prepare Rust Toolchain
+        if: env.WRT_TEST != 'true'
+        run: |
+          cd ./wrt/
+
+          $GITHUB_WORKSPACE/.github/scripts/prepare-rust.sh
 
       - name: Download Packages
         if: env.WRT_TEST != 'true'
@@ -242,22 +313,29 @@ jobs:
         run: |
           cd ./wrt/
 
-          make -j$(nproc) || make -j1 V=s
+          mkdir -p $GITHUB_WORKSPACE/build-reports
+          make -j$(nproc) BUILD_TIME_LOG="$GITHUB_WORKSPACE/build-reports/parallel.tsv" || \
+            make -j1 V=s BUILD_TIME_LOG="$GITHUB_WORKSPACE/build-reports/serial.tsv"
 
-      - name: Check Cache Source
-        id: cache-source
-        if: ${{ !inputs.WRT_TEST && success() }}
+      - name: Collect Build Reports
+        if: env.WRT_TEST != 'true' && always()
+        continue-on-error: true
         run: |
-          REMOTE_HASH=$(git ls-remote "$WRT_REPO" "refs/heads/$WRT_BRANCH" | awk 'NR == 1 {print $1}')
-          if [ -n "$REMOTE_HASH" ] && [ "$REMOTE_HASH" = "$WRT_HASH" ]; then
-            echo "current=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "current=false" >> "$GITHUB_OUTPUT"
-            echo "skip cache save: source branch is now ${REMOTE_HASH:-unknown}, built $WRT_HASH"
-          fi
+          cd ./wrt/
+
+          $GITHUB_WORKSPACE/.github/scripts/collect-build-reports.sh
+
+      - name: Upload Build Reports
+        if: env.WRT_TEST != 'true' && always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-reports-${{env.WRT_CONFIG}}-${{env.WRT_PROFILE}}-${{env.WRT_INFO}}-${{github.run_attempt}}
+          path: ./build-reports/
+          retention-days: 7
 
       - name: Save Build Cache
-        if: ${{ !inputs.WRT_TEST && success() && steps.cache-source.outputs.current == 'true' }}
+        if: env.WRT_TEST != 'true' && success() && steps.check-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           key: ${{env.WRT_CACHE_KEY}}
@@ -354,10 +432,11 @@ jobs:
             ━━━━━━━━━━━━━━━━━━━━━━━
 
             ⚙️ 固件特性
-            - NSS 硬件加速支持
-            - 基于 OpenWrt / ImmortalWrt
+            - Qualcomm PPE 开源硬件加速 + Linux 原生 Flowtable 硬件卸载
+            - SONiC FullCone NAT1 游戏穿透支持
+            - 基于 Linux 6.18 LTS 内核 / firewall4 架构
             - 常用 LuCI 插件预集成
-            - 云端自动编译更新
+            - 云端自动编译更新与极速构建优化
             - 支持自定义配置构建
             ━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -401,58 +480,35 @@ jobs:
   cache-rollover:
     name: Roll cache generations
     needs: core
-    if: ${{ !inputs.WRT_TEST && needs.core.result == 'success' }}
+    if: inputs.WRT_TEST != 'true' && needs.core.result == 'success'
     runs-on: ubuntu-latest
     concurrency:
-      group: wrt-cache-rollover-${{inputs.WRT_SOURCE}}-${{inputs.WRT_BRANCH}}
+      group: wrt-cache-rollover-${{github.ref}}-${{needs.core.outputs.cache_prefix}}
       cancel-in-progress: false
     env:
-      GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
       GH_REPO: ${{github.repository}}
-      WRT_REPO: ${{inputs.WRT_REPO}}
-      WRT_BRANCH: ${{inputs.WRT_BRANCH}}
       WRT_CACHE_PREFIX: ${{needs.core.outputs.cache_prefix}}
-      WRT_LEGACY_CACHE_PREFIX: ${{needs.core.outputs.legacy_cache_prefix}}
       WRT_CACHE_KEY: ${{needs.core.outputs.cache_key}}
-      WRT_SOURCE_HASH: ${{needs.core.outputs.source_hash}}
+      WRT_CACHE_STARTED: ${{needs.core.outputs.cache_started}}
     steps:
       - name: Roll Build Cache
+        # 清理异常只警告，不把已发布固件标为构建失败。
+        continue-on-error: true
         run: |
           set -euo pipefail
-          delete_cache_key() {
-            local exact_key="$1"
-            gh cache list --repo "$GH_REPO" --key "$exact_key" --ref "$GITHUB_REF" --limit 100 --json id,key --jq '.[] | [.id, .key] | @tsv' |
-              while IFS=$'\t' read -r CACHE_ID CACHE_KEY; do
-                [ "$CACHE_KEY" = "$exact_key" ] || continue
-                gh cache delete "$CACHE_ID" --repo "$GH_REPO" || echo "warning: failed to delete cache $CACHE_ID ($CACHE_KEY)"
-              done
-          }
-
-          REMOTE_HASH=$(git ls-remote "$WRT_REPO" "refs/heads/$WRT_BRANCH" | awk 'NR == 1 {print $1}')
-          if [ -z "$REMOTE_HASH" ] || [ "$REMOTE_HASH" != "$WRT_SOURCE_HASH" ]; then
-            echo "remove stale cache generation: source branch is now ${REMOTE_HASH:-unknown}, built $WRT_SOURCE_HASH"
-            delete_cache_key "$WRT_CACHE_KEY"
+          CACHES=$(gh cache list --repo "$GH_REPO" --key "$WRT_CACHE_PREFIX-" --ref "$GITHUB_REF" --limit 100 --json id,key,createdAt)
+          CURRENT_CREATED=$(jq -r --arg key "$WRT_CACHE_KEY" '[.[] | select(.key == $key) | .createdAt] | min // empty' <<< "$CACHES")
+          if [ -z "$CURRENT_CREATED" ]; then
+            echo "skip cache rollover: current cache is not available"
             exit 0
           fi
 
-          CURRENT_CACHE_FOUND=0
-          while IFS= read -r CACHE_KEY; do
-            if [ "$CACHE_KEY" = "$WRT_CACHE_KEY" ]; then
-              CURRENT_CACHE_FOUND=1
-              break
-            fi
-          done < <(gh cache list --repo "$GH_REPO" --key "$WRT_CACHE_KEY" --ref "$GITHUB_REF" --limit 100 --json key --jq '.[].key')
-
-          if [ "$CURRENT_CACHE_FOUND" -ne 1 ]; then
-            echo "skip cache rollover: current cache is not available yet"
-            exit 0
-          fi
-
-          for CACHE_PREFIX in "$WRT_CACHE_PREFIX-" "$WRT_LEGACY_CACHE_PREFIX-"; do
-            gh cache list --repo "$GH_REPO" --key "$CACHE_PREFIX" --ref "$GITHUB_REF" --limit 100 --json id,key --jq '.[] | [.id, .key] | @tsv' |
-              while IFS=$'\t' read -r CACHE_ID CACHE_KEY; do
-                [ -n "$CACHE_ID" ] || continue
-                [ "$CACHE_KEY" = "$WRT_CACHE_KEY" ] && continue
-                gh cache delete "$CACHE_ID" --repo "$GH_REPO" || echo "warning: failed to delete cache $CACHE_ID ($CACHE_KEY)"
-              done
-          done
+          # 只清理早于本次恢复、且早于当前缓存的条目。
+          # 保护重叠构建新保存的缓存，也防止重跑旧提交删除较新的缓存。
+          jq -r --arg key "$WRT_CACHE_KEY" --arg started "$WRT_CACHE_STARTED" --arg current "$CURRENT_CREATED" \
+            '.[] | select(.key != $key and .createdAt < $started and .createdAt < $current) | .id' <<< "$CACHES" |
+            while IFS= read -r CACHE_ID; do
+              [ -n "$CACHE_ID" ] || continue
+              gh cache delete "$CACHE_ID" --repo "$GH_REPO" ||
+                echo "::warning::Failed to delete cache $CACHE_ID"
+            done

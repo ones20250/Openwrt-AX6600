@@ -35,7 +35,7 @@ jobs:
         CONFIG: [IPQ60XX-WIFI-YES]
         PROFILE: [PLUS]
         SOURCE: [ones20250/immortalwrt_ipq]
-        BRANCH: [main]
+        BRANCH: [owrt]
 
     #调用公用编译核心WRT-CORE.yml
     uses: ./.github/workflows/WRT-CORE.yml
