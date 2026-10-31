@@ -1,1 +1,5 @@
 .idea/
+# 本地私有文档与上游跟踪记录（禁止提交到 GitHub）
+*.local.md
+*UPSTREAM*
+
