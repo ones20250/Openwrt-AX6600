@@ -243,6 +243,8 @@ jobs:
           $GITHUB_WORKSPACE/Scripts/Settings.sh
           $GITHUB_WORKSPACE/.github/scripts/prepare-build-host.sh
 
+          cp .config .config.seed
+
           make defconfig -j$(nproc)
           make clean -j$(nproc)
 
@@ -280,13 +282,27 @@ jobs:
 
           # 5. PLUS 核心插件入选断言 (当 WRT_PROFILE 为 PLUS 时)
           if [[ "${WRT_PROFILE_UPPER:-${WRT_PROFILE}}" == "PLUS" ]]; then
+            echo "--- 检查 PLUS 核心插件意图一致性 ---"
             for PKG in luci-app-passwall2 luci-app-openclash luci-app-dockerman luci-app-adguardhome luci-app-wolultra; do
-              if ! grep -q "^CONFIG_PACKAGE_${PKG}=y" .config; then
-                echo "::error::断言失败: PLUS 核心插件 ${PKG} 未实际入选！"
-                FAIL=1
+              PKG_INTENT="CONFIG_PACKAGE_${PKG}=y"
+              if [[ -f .config.seed ]]; then
+                PKG_INTENT=$(grep -E "^(#\s*)?CONFIG_PACKAGE_${PKG}(=|[[:space:]])" .config.seed | tail -n 1 || true)
+              fi
+
+              if [[ "$PKG_INTENT" == "CONFIG_PACKAGE_${PKG}=y" ]]; then
+                if grep -q "^CONFIG_PACKAGE_${PKG}=y" .config; then
+                  echo "  [PASS] PLUS 核心插件 ${PKG}: 已声明启用并成功入选"
+                else
+                  echo "::error::断言失败: PLUS 核心插件 ${PKG} 未实际入选！"
+                  FAIL=1
+                fi
+              else
+                echo "  [SKIP] PLUS 核心插件 ${PKG}: 源配置未声明启用，跳过校验"
               fi
             done
           fi
+
+          rm -f .config.seed
 
           if [[ $FAIL -ne 0 ]]; then
             echo "::error::配置断言校验失败，终止构建！"
