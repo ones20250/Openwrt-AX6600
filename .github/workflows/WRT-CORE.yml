@@ -309,6 +309,8 @@ jobs:
 
           # 6. Qualcomm PPE 时钟驱动补丁生效断言
           PPE_DRIVER="target/linux/qualcommax/files/drivers/net/ethernet/qualcomm/qca_ppe_main.c"
+          IPQ6018_PATCH="target/linux/qualcommax/patches-6.18/0918-clk-qcom-gcc-ipq6018-keep-port-5-on-uniphy1-at-SGMII-rates.patch"
+          IPQ8074_CONFLICT="target/linux/qualcommax/patches-6.18/0919-clk-qcom-gcc-ipq8074-keep-port-5-on-uniphy1-at-SGMII-rates.patch"
           if [ -d "target" ]; then
             if [ ! -f "$PPE_DRIVER" ]; then
               echo "::error::断言失败: Qualcomm PPE 驱动文件缺失 ($PPE_DRIVER)！"
@@ -316,8 +318,14 @@ jobs:
             elif ! grep -q "ppe_port_clk_parents" "$PPE_DRIVER"; then
               echo "::error::断言失败: Qualcomm PPE 驱动未成功植入 QCA8081 时钟修复逻辑！"
               FAIL=1
+            elif [ ! -s "$IPQ6018_PATCH" ]; then
+              echo "::error::断言失败: IPQ6018 GCC 时钟补丁缺失或为空 ($IPQ6018_PATCH)！"
+              FAIL=1
+            elif [ -e "$IPQ8074_CONFLICT" ]; then
+              echo "::error::断言失败: 检测到已废弃的 IPQ8074 冲突补丁残留 ($IPQ8074_CONFLICT)！"
+              FAIL=1
             else
-              echo "  [PASS] Qualcomm PPE QCA8081 时钟修复逻辑校验通过。"
+              echo "  [PASS] Qualcomm PPE QCA8081 时钟修复逻辑与分频补丁校验通过。"
             fi
           fi
 

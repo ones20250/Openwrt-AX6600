@@ -199,19 +199,58 @@ if ! grep -q "未成功植入 QCA8081 时钟修复逻辑" "$TMP_DIR/output.log";
 fi
 echo "PASS: Target tree PPE driver without clock fix strictly failed (exit code 1)."
 
-# 9. 真实构建环境 PPE 驱动完整生效通过校验
-echo "--- Case: Target tree PPE driver with clock fix present ---"
+# 8b. 真实构建环境 IPQ6018 时钟补丁缺失或为空检测：严格拦截
+echo "--- Case: Target tree IPQ6018 clock patch missing or empty ---"
 echo "int ppe_port_clk_parents(void *priv) { return 0; }" > "$TMP_DIR/target/linux/qualcommax/files/drivers/net/ethernet/qualcomm/qca_ppe_main.c"
+mkdir -p "$TMP_DIR/target/linux/qualcommax/patches-6.18"
+rm -f "$TMP_DIR/target/linux/qualcommax/patches-6.18/0918-clk-qcom-gcc-ipq6018-keep-port-5-on-uniphy1-at-SGMII-rates.patch"
+set +e
+"$BASH_BIN" "$TEST_SCRIPT" "$TMP_DIR/.config" "PLUS" > "$TMP_DIR/output.log" 2>&1
+ACTUAL_EXIT=$?
+set -e
+if [ "$ACTUAL_EXIT" -ne 1 ]; then
+    echo "FAIL: Missing IPQ6018 patch expected exit 1, but got $ACTUAL_EXIT" >&2
+    cat "$TMP_DIR/output.log" >&2
+    exit 1
+fi
+if ! grep -q "IPQ6018 GCC 时钟补丁缺失或为空" "$TMP_DIR/output.log"; then
+    echo "FAIL: Error message did not report missing IPQ6018 patch: $(cat "$TMP_DIR/output.log")" >&2
+    exit 1
+fi
+echo "PASS: Target tree missing IPQ6018 patch strictly failed (exit code 1)."
+
+# 8c. 真实构建环境 IPQ8074 冲突补丁残留检测：严格拦截
+echo "--- Case: Target tree IPQ8074 conflict patch present ---"
+echo "patch content" > "$TMP_DIR/target/linux/qualcommax/patches-6.18/0918-clk-qcom-gcc-ipq6018-keep-port-5-on-uniphy1-at-SGMII-rates.patch"
+echo "conflict patch content" > "$TMP_DIR/target/linux/qualcommax/patches-6.18/0919-clk-qcom-gcc-ipq8074-keep-port-5-on-uniphy1-at-SGMII-rates.patch"
+set +e
+"$BASH_BIN" "$TEST_SCRIPT" "$TMP_DIR/.config" "PLUS" > "$TMP_DIR/output.log" 2>&1
+ACTUAL_EXIT=$?
+set -e
+if [ "$ACTUAL_EXIT" -ne 1 ]; then
+    echo "FAIL: IPQ8074 conflict patch expected exit 1, but got $ACTUAL_EXIT" >&2
+    cat "$TMP_DIR/output.log" >&2
+    exit 1
+fi
+if ! grep -q "检测到已废弃的 IPQ8074 冲突补丁残留" "$TMP_DIR/output.log"; then
+    echo "FAIL: Error message did not report IPQ8074 conflict patch: $(cat "$TMP_DIR/output.log")" >&2
+    exit 1
+fi
+echo "PASS: Target tree with IPQ8074 conflict patch strictly failed (exit code 1)."
+
+# 9. 真实构建环境 PPE 驱动与 IPQ6018 补丁完整生效通过校验
+echo "--- Case: Target tree PPE driver and IPQ6018 patch present ---"
+rm -f "$TMP_DIR/target/linux/qualcommax/patches-6.18/0919-clk-qcom-gcc-ipq8074-keep-port-5-on-uniphy1-at-SGMII-rates.patch"
 set +e
 "$BASH_BIN" "$TEST_SCRIPT" "$TMP_DIR/.config" "PLUS" > "$TMP_DIR/output.log" 2>&1
 ACTUAL_EXIT=$?
 set -e
 if [ "$ACTUAL_EXIT" -ne 0 ]; then
-    echo "FAIL: PPE driver with clock fix expected exit 0, but got $ACTUAL_EXIT" >&2
+    echo "FAIL: PPE driver and patch with clock fix expected exit 0, but got $ACTUAL_EXIT" >&2
     cat "$TMP_DIR/output.log" >&2
     exit 1
 fi
-if ! grep -q "Qualcomm PPE QCA8081 时钟修复逻辑校验通过" "$TMP_DIR/output.log"; then
+if ! grep -q "Qualcomm PPE QCA8081 时钟修复逻辑与分频补丁校验通过" "$TMP_DIR/output.log"; then
     echo "FAIL: Success message not found: $(cat "$TMP_DIR/output.log")" >&2
     exit 1
 fi
@@ -235,7 +274,7 @@ if ! grep -q "Qualcomm PPE 驱动文件缺失" "$TMP_DIR/output.log"; then
 fi
 echo "PASS: PURE profile target tree missing PPE driver strictly failed (exit code 1)."
 
-# 11. PURE 模式下真实构建环境 PPE 驱动完整生效通过校验
+# 11. PURE 模式下真实构建环境 PPE 驱动与 IPQ6018 补丁完整生效通过校验
 echo "--- Case: PURE profile target tree PPE driver with clock fix present ---"
 echo "int ppe_port_clk_parents(void *priv) { return 0; }" > "$TMP_DIR/target/linux/qualcommax/files/drivers/net/ethernet/qualcomm/qca_ppe_main.c"
 set +e
@@ -247,7 +286,7 @@ if [ "$ACTUAL_EXIT" -ne 0 ]; then
     cat "$TMP_DIR/output.log" >&2
     exit 1
 fi
-if ! grep -q "Qualcomm PPE QCA8081 时钟修复逻辑校验通过" "$TMP_DIR/output.log"; then
+if ! grep -q "Qualcomm PPE QCA8081 时钟修复逻辑与分频补丁校验通过" "$TMP_DIR/output.log"; then
     echo "FAIL: Success message not found under PURE: $(cat "$TMP_DIR/output.log")" >&2
     exit 1
 fi
