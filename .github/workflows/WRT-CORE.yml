@@ -307,6 +307,17 @@ jobs:
             done
           fi
 
+          # 6. Qualcomm PPE 时钟驱动补丁生效断言
+          PPE_DRIVER="target/linux/qualcommax/files/drivers/net/ethernet/qualcomm/qca_ppe_main.c"
+          if [ -f "$PPE_DRIVER" ]; then
+            if ! grep -q "ppe_port_clk_parents" "$PPE_DRIVER"; then
+              echo "::error::断言失败: Qualcomm PPE 驱动未成功植入 QCA8081 时钟修复逻辑！"
+              FAIL=1
+            else
+              echo "  [PASS] Qualcomm PPE QCA8081 时钟修复逻辑校验通过。"
+            fi
+          fi
+
           rm -f .config.seed
 
           if [[ $FAIL -ne 0 ]]; then

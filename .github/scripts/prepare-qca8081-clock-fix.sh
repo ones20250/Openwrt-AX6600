@@ -9,8 +9,13 @@ DRIVER=target/linux/qualcommax/files/drivers/net/ethernet/qualcomm/qca_ppe_main.
 # The SSDK/NSS trees have a different clock driver and must not receive this
 # PPE-specific backport. Both PURE and PLUS use this same preparation step.
 if [[ ! -f "$DRIVER" ]]; then
-    echo 'QCA8081 clock fix: no Qualcomm PPE driver; skipping.'
-    exit 0
+    if [[ "${GITHUB_ACTIONS:-false}" == "true" || "${CI:-false}" == "true" ]]; then
+        echo 'QCA8081 clock fix: missing Qualcomm PPE driver in CI environment; refusing build.' >&2
+        exit 1
+    else
+        echo 'QCA8081 clock fix: no Qualcomm PPE driver; skipping.'
+        exit 0
+    fi
 fi
 if ! grep -Eq '^KERNEL_PATCHVER[[:space:]]*:=[[:space:]]*6\.18[[:space:]]*$' target/linux/qualcommax/Makefile; then
     echo 'QCA8081 clock fix: unsupported PPE kernel; review the backport before building.' >&2
