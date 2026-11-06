@@ -1,0 +1,318 @@
+From 6985f61db8aeb2911a7e79515bace5690d35cd1b Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Andr=C3=A9=20Valentin?= <avalentin@marcant.net>
+Date: Thu, 29 Oct 2026 14:24:55 +0100
+Subject: [PATCH 1/2] qualcommax: keep port 5 on uniphy1 at SGMII rates
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Port 5 on IPQ6018 and IPQ8074 can be clocked from uniphy1, which runs
+at 312.5 MHz with the PHY in 2500BASE-X and at 125 MHz in SGMII. The
+port 5 RX and TX frequency tables serve uniphy1 only at 312.5 MHz, so
+a 1G or 100M rate that reaches the RCG while uniphy1 runs at 125 MHz
+moves the port onto uniphy0 when uniphy0 runs at 125 MHz, and otherwise
+leaves it on uniphy1 at 50 MHz (1G) or 10 MHz (100M).
+
+Add uniphy1 / 1 to the 125 MHz configs and uniphy1 / 5 to the 25 MHz
+configs of both GCC drivers, after the 312.5 MHz ones and before
+uniphy0. The patches are meant for linux-clk as well.
+
+Suggested-by: Julius Bairaktaris <julius@bairaktaris.de>
+Signed-off-by: André Valentin <avalentin@marcant.net>
+---
+ ...eep-port-5-on-uniphy1-at-SGMII-rates.patch | 58 +++++++++++++++++++
+ ...eep-port-5-on-uniphy1-at-SGMII-rates.patch | 58 +++++++++++++++++++
+ 2 files changed, 116 insertions(+)
+ create mode 100644 target/linux/qualcommax/patches-6.18/0918-clk-qcom-gcc-ipq6018-keep-port-5-on-uniphy1-at-SGMII-rates.patch
+ create mode 100644 target/linux/qualcommax/patches-6.18/0919-clk-qcom-gcc-ipq8074-keep-port-5-on-uniphy1-at-SGMII-rates.patch
+
+diff --git a/target/linux/qualcommax/patches-6.18/0918-clk-qcom-gcc-ipq6018-keep-port-5-on-uniphy1-at-SGMII-rates.patch b/target/linux/qualcommax/patches-6.18/0918-clk-qcom-gcc-ipq6018-keep-port-5-on-uniphy1-at-SGMII-rates.patch
+new file mode 100644
+index 00000000000000..d08fe0aa160693
+--- /dev/null
++++ b/target/linux/qualcommax/patches-6.18/0918-clk-qcom-gcc-ipq6018-keep-port-5-on-uniphy1-at-SGMII-rates.patch
+@@ -0,0 +1,58 @@
++From 7f1df76712e5eb5154d1131e8ef8dae6ac5f73e4 Mon Sep 17 00:00:00 2001
++From: =?UTF-8?q?Andr=C3=A9=20Valentin?= <avalentin@marcant.net>
++Date: Thu, 29 Oct 2026 13:00:00 +0100
++Subject: [PATCH] clk: qcom: gcc-ipq6018: keep port 5 on uniphy1 at SGMII rates
++MIME-Version: 1.0
++Content-Type: text/plain; charset=UTF-8
++Content-Transfer-Encoding: 8bit
++
++Port 5 can be clocked from uniphy1, which runs at 312.5 MHz with the
++PHY in 2500BASE-X and at 125 MHz in SGMII. The port 5 RX and TX
++frequency tables serve uniphy1 only at 312.5 MHz: 125 MHz lists
++uniphy1 / 2.5 and then uniphy0 / 1, 25 MHz lists uniphy1 / 12.5 and
++then uniphy0 / 5. __clk_rcg2_select_conf() takes the first config that
++gives the rate exactly, so once uniphy1 runs at 125 MHz, a 1G or 100M
++rate that reaches the RCG moves the port onto uniphy0 whenever uniphy0
++runs at 125 MHz, and otherwise leaves it on uniphy1 at 50 MHz (1G) or
++10 MHz (100M).
++
++Add uniphy1 / 1 to the 125 MHz configs and uniphy1 / 5 to the 25 MHz
++configs, after the 312.5 MHz ones so that 2500BASE-X keeps its divider
++and before uniphy0.
++
++Suggested-by: Julius Bairaktaris <julius@bairaktaris.de>
++Signed-off-by: André Valentin <avalentin@marcant.net>
++---
++ drivers/clk/qcom/gcc-ipq6018.c | 4 ++++
++ 1 file changed, 4 insertions(+)
++
++--- a/drivers/clk/qcom/gcc-ipq6018.c
+++++ b/drivers/clk/qcom/gcc-ipq6018.c
++@@ -513,11 +513,13 @@ static struct clk_rcg2 apss_ahb_clk_src
++ 
++ static const struct freq_conf ftbl_nss_port5_rx_clk_src_25[] = {
++ 	C(P_UNIPHY1_RX, 12.5, 0, 0),
+++	C(P_UNIPHY1_RX, 5, 0, 0),
++ 	C(P_UNIPHY0_RX, 5, 0, 0),
++ };
++ 
++ static const struct freq_conf ftbl_nss_port5_rx_clk_src_125[] = {
++ 	C(P_UNIPHY1_RX, 2.5, 0, 0),
+++	C(P_UNIPHY1_RX, 1, 0, 0),
++ 	C(P_UNIPHY0_RX, 1, 0, 0),
++ };
++ 
++@@ -568,11 +570,13 @@ static struct clk_rcg2 nss_port5_rx_clk_
++ 
++ static const struct freq_conf ftbl_nss_port5_tx_clk_src_25[] = {
++ 	C(P_UNIPHY1_TX, 12.5, 0, 0),
+++	C(P_UNIPHY1_TX, 5, 0, 0),
++ 	C(P_UNIPHY0_TX, 5, 0, 0),
++ };
++ 
++ static const struct freq_conf ftbl_nss_port5_tx_clk_src_125[] = {
++ 	C(P_UNIPHY1_TX, 2.5, 0, 0),
+++	C(P_UNIPHY1_TX, 1, 0, 0),
++ 	C(P_UNIPHY0_TX, 1, 0, 0),
++ };
++ 
+diff --git a/target/linux/qualcommax/patches-6.18/0919-clk-qcom-gcc-ipq8074-keep-port-5-on-uniphy1-at-SGMII-rates.patch b/target/linux/qualcommax/patches-6.18/0919-clk-qcom-gcc-ipq8074-keep-port-5-on-uniphy1-at-SGMII-rates.patch
+new file mode 100644
+index 00000000000000..ca06df05add1e5
+--- /dev/null
++++ b/target/linux/qualcommax/patches-6.18/0919-clk-qcom-gcc-ipq8074-keep-port-5-on-uniphy1-at-SGMII-rates.patch
+@@ -0,0 +1,58 @@
++From e99546472370a40cfb501fadd5ad87d0e1292cef Mon Sep 17 00:00:00 2001
++From: =?UTF-8?q?Andr=C3=A9=20Valentin?= <avalentin@marcant.net>
++Date: Thu, 29 Oct 2026 13:00:00 +0100
++Subject: [PATCH] clk: qcom: gcc-ipq8074: keep port 5 on uniphy1 at SGMII rates
++MIME-Version: 1.0
++Content-Type: text/plain; charset=UTF-8
++Content-Transfer-Encoding: 8bit
++
++Port 5 can be clocked from uniphy1, which runs at 312.5 MHz with the
++PHY in 2500BASE-X and at 125 MHz in SGMII. The port 5 RX and TX
++frequency tables serve uniphy1 only at 312.5 MHz: 125 MHz lists
++uniphy1 / 2.5 and then uniphy0 / 1, 25 MHz lists uniphy1 / 12.5 and
++then uniphy0 / 5. __clk_rcg2_select_conf() takes the first config that
++gives the rate exactly, so once uniphy1 runs at 125 MHz, a 1G or 100M
++rate that reaches the RCG moves the port onto uniphy0 whenever uniphy0
++runs at 125 MHz, and otherwise leaves it on uniphy1 at 50 MHz (1G) or
++10 MHz (100M).
++
++Add uniphy1 / 1 to the 125 MHz configs and uniphy1 / 5 to the 25 MHz
++configs, after the 312.5 MHz ones so that 2500BASE-X keeps its divider
++and before uniphy0.
++
++Suggested-by: Julius Bairaktaris <julius@bairaktaris.de>
++Signed-off-by: André Valentin <avalentin@marcant.net>
++---
++ drivers/clk/qcom/gcc-ipq8074.c | 4 ++++
++ 1 file changed, 4 insertions(+)
++
++--- a/drivers/clk/qcom/gcc-ipq8074.c
+++++ b/drivers/clk/qcom/gcc-ipq8074.c
++@@ -1679,11 +1679,13 @@ static struct clk_regmap_div nss_port4_t
++ 
++ static const struct freq_conf ftbl_nss_port5_rx_clk_src_25[] = {
++ 	C(P_UNIPHY1_RX, 12.5, 0, 0),
+++	C(P_UNIPHY1_RX, 5, 0, 0),
++ 	C(P_UNIPHY0_RX, 5, 0, 0),
++ };
++ 
++ static const struct freq_conf ftbl_nss_port5_rx_clk_src_125[] = {
++ 	C(P_UNIPHY1_RX, 2.5, 0, 0),
+++	C(P_UNIPHY1_RX, 1, 0, 0),
++ 	C(P_UNIPHY0_RX, 1, 0, 0),
++ };
++ 
++@@ -1749,11 +1751,13 @@ static struct clk_regmap_div nss_port5_r
++ 
++ static const struct freq_conf ftbl_nss_port5_tx_clk_src_25[] = {
++ 	C(P_UNIPHY1_TX, 12.5, 0, 0),
+++	C(P_UNIPHY1_TX, 5, 0, 0),
++ 	C(P_UNIPHY0_TX, 5, 0, 0),
++ };
++ 
++ static const struct freq_conf ftbl_nss_port5_tx_clk_src_125[] = {
++ 	C(P_UNIPHY1_TX, 2.5, 0, 0),
+++	C(P_UNIPHY1_TX, 1, 0, 0),
++ 	C(P_UNIPHY0_TX, 1, 0, 0),
++ };
++ 
+
+From d21c9d3b1b936ae392489ead075fda5719095e30 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Andr=C3=A9=20Valentin?= <avalentin@marcant.net>
+Date: Tue, 4 Aug 2026 06:08:18 +0200
+Subject: [PATCH 2/2] qualcommax: fix QCA8081 port egress corruption
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+On IPQ6018 the QCA8081 port (port 5, uniphy1) corrupts frames on
+egress: TCP TX drops to ~900 Mbit/s with thousands of retransmits while
+RX stays clean, at 1G as well as at 2.5G. tx_dropped/tx_errors stay
+zero, because the MAC transmits fine and the frames are mangled on the
+wire.
+
+The bootloader leaves nss_port5_tx_clk_src on the uniphy1 RX serdes
+clock, a source its frequency table never selects. At mac_link_up() the
+requested rate already matches, so clk_set_rate() bails out early and
+the mux is never reprogrammed: the port transmits off the recovered RX
+clock.
+
+Nothing about this is specific to port 5 TX: any port RCG, RX or TX,
+can be left on such a source. So set both parents of every port from
+its pcs-handle once in probe, after the port clocks are taken and before
+the first clk_set_rate(). The PCS node is the clock provider, so the
+parents come from UNIPHY_CLK_RX and UNIPHY_CLK_TX without any name
+lookup. Every port clock on IPQ6018 and IPQ8074 is branch -> divider
+-> RCG; where the clock two levels above the branch cannot select the
+PCS clock, or the divider already can, the probe fails with -EINVAL
+rather than reparenting some other clock. A later rate change keeps the
+parents as long as the RCG's frequency table offers the PCS at that
+rate, which for port 5 at the SGMII rates takes the uniphy1 / 1 and / 5
+configs from the previous commit. Errors go through dev_err_probe(), so
+a PCS that is not there yet defers the probe.
+
+Tested on a MikroTik Chateau 5G R17 ax (ipq6010) on current main.
+Without the patch nss_port5_tx_clk_src reads uniphy1_gcc_rx_clk and its
+CFG (0x0186806c) is 0x400, src 4 = uniphy1 RX; with it the parent is
+uniphy1_gcc_tx_clk and the CFG 0x300, src 3 = uniphy1 TX. The same
+probe moves the TX RCGs of the QCA8075 ports 1-4 from uniphy0 RX (CFG
+0x200) to uniphy0 TX (0x100). Every RX source is unchanged.
+
+With both commits, after a link-up at 2.5G, 1G and 100M (full duplex)
+both port 5 RCGs read uniphy1_gcc_{rx,tx}_clk with CFG 0x300 (src 3,
+divider 1), at 312.5, 125 and 125 MHz, the 100M rate coming from the
+divider at / 5. iperf3 -t 30 runs at 2.31/2.34 Gbit/s, 939/939 Mbit/s
+and 94/94 Mbit/s (RX/TX), with no rx or tx errors on the port.
+
+Reported-by: Jan Petrlík <jan.petrlik@mailbox.org>
+Suggested-by: Julius Bairaktaris <julius@bairaktaris.de>
+Signed-off-by: André Valentin <avalentin@marcant.net>
+---
+ .../net/ethernet/qualcomm/qca_ppe_main.c      | 85 +++++++++++++++++++
+ 1 file changed, 85 insertions(+)
+
+diff --git a/target/linux/qualcommax/files/drivers/net/ethernet/qualcomm/qca_ppe_main.c b/target/linux/qualcommax/files/drivers/net/ethernet/qualcomm/qca_ppe_main.c
+index 7b8222fe55064c..3c1396a163c9a0 100644
+--- a/target/linux/qualcommax/files/drivers/net/ethernet/qualcomm/qca_ppe_main.c
++++ b/target/linux/qualcommax/files/drivers/net/ethernet/qualcomm/qca_ppe_main.c
+@@ -17,3 +17,5 @@
+ 
++#include <dt-bindings/net/qca-uniphy.h>
++
+ #include "qca_ppe.h"
+ 
+@@ -3089,6 +3091,84 @@ static void ppe_ipq6018_mux_setup(struct qca_ppe_priv *priv)
+ 				   CPPE_PCS0_CH4_SEL);
+ }
+ 
++/* Point the RCG behind a port clock at its PCS clock. On ipq6018 and
++ * ipq8074 every port clock is branch -> divider -> RCG, and of the two only
++ * the RCG can select the PCS. A GCC with another chain fails with -EINVAL
++ * rather than having some other clock reparented.
++ */
++static int ppe_port_clk_parent(struct clk *branch, struct device_node *pcs,
++			       int idx)
++{
++	struct of_phandle_args spec = {
++		.np = pcs,
++		.args_count = 1,
++		.args = { idx },
++	};
++	struct clk *parent, *div, *rcg;
++	int ret;
++
++	if (!branch)
++		return 0;
++
++	parent = of_clk_get_from_provider(&spec);
++	if (IS_ERR(parent))
++		return PTR_ERR(parent);
++
++	/* clk_has_parent() is true for a NULL clock, hence the NULL checks. */
++	div = clk_get_parent(branch);
++	rcg = div ? clk_get_parent(div) : NULL;
++	if (!rcg || clk_has_parent(div, parent) || !clk_has_parent(rcg, parent))
++		ret = -EINVAL;
++	else
++		ret = clk_set_parent(rcg, parent);
++	clk_put(parent);
++
++	return ret;
++}
++
++/* The bootloader can leave a port RCG on a source its frequency table never
++ * selects, and clk_set_rate() keeps it there whenever the rate already
++ * matches, so take both parents from the port's PCS before any rate is set.
++ * A later rate change that reaches the RCG keeps the PCS only where the
++ * frequency table offers it for that rate; for port 5 at the SGMII rates
++ * that takes the uniphy1 / 1 and / 5 configs in gcc-ipq6018.c and
++ * gcc-ipq8074.c.
++ */
++static int ppe_port_clk_parents(struct qca_ppe_priv *priv)
++{
++	struct device_node *ports_np, *port_np;
++	struct of_phandle_args pcs_args;
++	int ret = 0;
++	u32 port;
++
++	ports_np = ppe_ports_node(priv->ds.dev->of_node);
++
++	for_each_available_child_of_node(ports_np, port_np) {
++		if (of_property_read_u32(port_np, "reg", &port) ||
++		    port >= priv->data->num_ports)
++			continue;
++
++		if (of_parse_phandle_with_args(port_np, "pcs-handle",
++					       "#pcs-cells", 0, &pcs_args))
++			continue;
++
++		ret = ppe_port_clk_parent(priv->port_rx_clk[port], pcs_args.np,
++					  UNIPHY_CLK_RX);
++		if (!ret)
++			ret = ppe_port_clk_parent(priv->port_tx_clk[port],
++						  pcs_args.np, UNIPHY_CLK_TX);
++		of_node_put(pcs_args.np);
++		if (ret) {
++			of_node_put(port_np);
++			break;
++		}
++	}
++
++	of_node_put(ports_np);
++
++	return ret;
++}
++
+ static const struct regmap_config ppe_regmap_cfg = {
+ 	.reg_bits = 32,
+ 	.reg_stride = 4,
+@@ -3213,6 +3293,11 @@ static int qca_ppe_probe(struct platform_device *pdev)
+ 			return PTR_ERR(priv->port_rst[i]);
+ 	}
+ 
++	ret = ppe_port_clk_parents(priv);
++	if (ret)
++		return dev_err_probe(&pdev->dev, ret,
++				     "failed to set the port clock parents\n");
++
+ 	ppe_scheduler_init(priv);
+ 
+ 	ppe_mac_hw_init(priv);

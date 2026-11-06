@@ -1,3 +1,4 @@
 *.txt text eol=lf
 *.sh text eol=lf
 *.mk text eol=lf
+Patches/*.patch text eol=lf -whitespace
