@@ -55,7 +55,6 @@ run_helper
 grep -q 'ret = clk_set_parent(rcg, parent);' "$TREE/$DRIVER"
 grep -q 'ret = ppe_port_clk_parents(priv);' "$TREE/$DRIVER"
 test -s "$TREE/target/linux/qualcommax/patches-6.18/0918-clk-qcom-gcc-ipq6018-keep-port-5-on-uniphy1-at-SGMII-rates.patch"
-test -s "$TREE/target/linux/qualcommax/patches-6.18/0919-clk-qcom-gcc-ipq8074-keep-port-5-on-uniphy1-at-SGMII-rates.patch"
 snapshot > "$TMP/once"
 run_helper
 snapshot > "$TMP/twice"

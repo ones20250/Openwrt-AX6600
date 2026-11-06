@@ -1,16 +1,7 @@
-# QCA8081 port clock backport
+# QCA8081 端口时钟与 GCC 分频修复
 
-`qualcommax-qca8081-clock-fix.patch` backports OpenWrt
-[PR #24566](https://github.com/openwrt/openwrt/pull/24566), commits
-`6985f61db8aeb2911a7e79515bace5690d35cd1b` and
-`d21c9d3b1b936ae392489ead075fda5719095e30`.
-Original authorship and Signed-off-by trailers are retained. Only the
-include hunk's context was reduced for this fork's extra QCA PPE header;
-the added C code and GCC patches are unchanged.
+`qualcommax-qca8081-clock-fix.patch` 专门针对京东云无线宝雅典娜 AX6600（IPQ6010 / IPQ6018）构建，修复了 QCA8081 2.5G WAN 口发送时钟来源缺陷：
 
-The series selects each PPE port's PCS RX/TX clock parents before setting
-rates and keeps port 5 on UNIPHY1 at SGMII rates. The common build helper
-applies both parts atomically to PPE sources, accepts a complete existing
-backport, and rejects partial backports or conflicts. When upstream changes
-or incorporates the fix, refresh or remove this series rather than bypassing
-the check.
+1. **PPE 端口父时钟绑定**：在设置端口速率前，显式将每个 PPE 端口的 RX/TX 时钟父级指向其 PCS 节点（UNIPHY）的 RX/TX 输出，纠正了 U-Boot 遗留将 Port 5 TX 挂在 RX 恢复时钟上的严重抖动缺陷。
+2. **IPQ6018 SGMII 频率表对齐**：在 `gcc-ipq6018` 驱动中补齐 UNIPHY1 在 125MHz（/1）与 25MHz（/5）下的分频配置，确保 1000M 与 100M 速率自协商时不脱离 UNIPHY1。
+3. **单一硬件排他性原则**：本补丁严格排除了与雅典娜无关的 IPQ8074 芯片补丁，避免多芯片通用抽象带来的内核源码上下文冲突与构建中断。
