@@ -160,4 +160,98 @@ CONFIG_PACKAGE_luci-app-dockerman=y
 CONFIG_PACKAGE_luci-app-adguardhome=y
 CONFIG_PACKAGE_luci-app-wolultra=y" 0
 
+# 7. 真实构建环境缺失 PPE 驱动检测：在 target 存在时严格拦截驱动缺失
+echo "--- Case: Target tree present but Qualcomm PPE driver missing ---"
+mkdir -p "$TMP_DIR/target"
+printf "CONFIG_PACKAGE_luci-app-passwall2=y\nCONFIG_PACKAGE_luci-app-openclash=y\nCONFIG_PACKAGE_luci-app-dockerman=y\nCONFIG_PACKAGE_luci-app-adguardhome=y\nCONFIG_PACKAGE_luci-app-wolultra=y\n" > "$TMP_DIR/.config"
+printf "CONFIG_PACKAGE_luci-app-passwall2=y\nCONFIG_PACKAGE_luci-app-openclash=y\nCONFIG_PACKAGE_luci-app-dockerman=y\nCONFIG_PACKAGE_luci-app-adguardhome=y\nCONFIG_PACKAGE_luci-app-wolultra=y\n" > "$TMP_DIR/.config.seed"
+set +e
+"$BASH_BIN" "$TEST_SCRIPT" "$TMP_DIR/.config" "PLUS" > "$TMP_DIR/output.log" 2>&1
+ACTUAL_EXIT=$?
+set -e
+if [ "$ACTUAL_EXIT" -ne 1 ]; then
+    echo "FAIL: Target tree missing PPE driver expected exit 1, but got $ACTUAL_EXIT" >&2
+    cat "$TMP_DIR/output.log" >&2
+    exit 1
+fi
+if ! grep -q "Qualcomm PPE 驱动文件缺失" "$TMP_DIR/output.log"; then
+    echo "FAIL: Error message did not report missing PPE driver: $(cat "$TMP_DIR/output.log")" >&2
+    exit 1
+fi
+echo "PASS: Target tree missing PPE driver strictly failed (exit code 1)."
+
+# 8. 真实构建环境 PPE 驱动未植入时钟修复检测：严格拦截
+echo "--- Case: Target tree PPE driver missing clock fix logic ---"
+mkdir -p "$TMP_DIR/target/linux/qualcommax/files/drivers/net/ethernet/qualcomm"
+echo "void qca_ppe_dummy(void) {}" > "$TMP_DIR/target/linux/qualcommax/files/drivers/net/ethernet/qualcomm/qca_ppe_main.c"
+set +e
+"$BASH_BIN" "$TEST_SCRIPT" "$TMP_DIR/.config" "PLUS" > "$TMP_DIR/output.log" 2>&1
+ACTUAL_EXIT=$?
+set -e
+if [ "$ACTUAL_EXIT" -ne 1 ]; then
+    echo "FAIL: PPE driver without clock fix expected exit 1, but got $ACTUAL_EXIT" >&2
+    cat "$TMP_DIR/output.log" >&2
+    exit 1
+fi
+if ! grep -q "未成功植入 QCA8081 时钟修复逻辑" "$TMP_DIR/output.log"; then
+    echo "FAIL: Error message did not report unpatched clock fix: $(cat "$TMP_DIR/output.log")" >&2
+    exit 1
+fi
+echo "PASS: Target tree PPE driver without clock fix strictly failed (exit code 1)."
+
+# 9. 真实构建环境 PPE 驱动完整生效通过校验
+echo "--- Case: Target tree PPE driver with clock fix present ---"
+echo "int ppe_port_clk_parents(void *priv) { return 0; }" > "$TMP_DIR/target/linux/qualcommax/files/drivers/net/ethernet/qualcomm/qca_ppe_main.c"
+set +e
+"$BASH_BIN" "$TEST_SCRIPT" "$TMP_DIR/.config" "PLUS" > "$TMP_DIR/output.log" 2>&1
+ACTUAL_EXIT=$?
+set -e
+if [ "$ACTUAL_EXIT" -ne 0 ]; then
+    echo "FAIL: PPE driver with clock fix expected exit 0, but got $ACTUAL_EXIT" >&2
+    cat "$TMP_DIR/output.log" >&2
+    exit 1
+fi
+if ! grep -q "Qualcomm PPE QCA8081 时钟修复逻辑校验通过" "$TMP_DIR/output.log"; then
+    echo "FAIL: Success message not found: $(cat "$TMP_DIR/output.log")" >&2
+    exit 1
+fi
+echo "PASS: Target tree PPE driver with clock fix succeeded (exit code 0)."
+
+# 10. PURE 模式下真实构建环境缺失 PPE 驱动检测：严格拦截（确保断言不因 Profile 隔离失效）
+echo "--- Case: PURE profile target tree missing Qualcomm PPE driver ---"
+rm -f "$TMP_DIR/target/linux/qualcommax/files/drivers/net/ethernet/qualcomm/qca_ppe_main.c"
+set +e
+"$BASH_BIN" "$TEST_SCRIPT" "$TMP_DIR/.config" "PURE" > "$TMP_DIR/output.log" 2>&1
+ACTUAL_EXIT=$?
+set -e
+if [ "$ACTUAL_EXIT" -ne 1 ]; then
+    echo "FAIL: PURE profile missing PPE driver expected exit 1, but got $ACTUAL_EXIT" >&2
+    cat "$TMP_DIR/output.log" >&2
+    exit 1
+fi
+if ! grep -q "Qualcomm PPE 驱动文件缺失" "$TMP_DIR/output.log"; then
+    echo "FAIL: Error message did not report missing PPE driver under PURE: $(cat "$TMP_DIR/output.log")" >&2
+    exit 1
+fi
+echo "PASS: PURE profile target tree missing PPE driver strictly failed (exit code 1)."
+
+# 11. PURE 模式下真实构建环境 PPE 驱动完整生效通过校验
+echo "--- Case: PURE profile target tree PPE driver with clock fix present ---"
+echo "int ppe_port_clk_parents(void *priv) { return 0; }" > "$TMP_DIR/target/linux/qualcommax/files/drivers/net/ethernet/qualcomm/qca_ppe_main.c"
+set +e
+"$BASH_BIN" "$TEST_SCRIPT" "$TMP_DIR/.config" "PURE" > "$TMP_DIR/output.log" 2>&1
+ACTUAL_EXIT=$?
+set -e
+if [ "$ACTUAL_EXIT" -ne 0 ]; then
+    echo "FAIL: PURE profile PPE driver with clock fix expected exit 0, but got $ACTUAL_EXIT" >&2
+    cat "$TMP_DIR/output.log" >&2
+    exit 1
+fi
+if ! grep -q "Qualcomm PPE QCA8081 时钟修复逻辑校验通过" "$TMP_DIR/output.log"; then
+    echo "FAIL: Success message not found under PURE: $(cat "$TMP_DIR/output.log")" >&2
+    exit 1
+fi
+echo "PASS: PURE profile target tree PPE driver with clock fix succeeded (exit code 0)."
+rm -rf "$TMP_DIR/target"
+
 echo "=== All Intent-Aware Dynamic Assertion Regression Tests Passed! ==="

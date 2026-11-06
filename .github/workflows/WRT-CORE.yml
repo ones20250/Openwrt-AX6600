@@ -158,7 +158,7 @@ jobs:
           WRT_SUBTARGET=$(grep -m 1 -oP "^CONFIG_TARGET_${WRT_TARGET}_\K[\w]+(?=\=y)" "./Config/$WRT_CONFIG.txt")
           WRT_CACHE_SOURCE=${WRT_SOURCE//\//-}
           WRT_CACHE_BRANCH=${WRT_BRANCH//\//-}
-          # 保留配置名隔离；PURE/PLUS 不加入键，继续共用缓存。
+          # 保留目标硬件配置名($WRT_CONFIG)隔离；固件版本($WRT_PROFILE)不加入键，PURE/PLUS 共用工具链与 ccache 缓存
           WRT_CACHE_PREFIX="wrt-$WRT_CACHE_SOURCE-$WRT_CACHE_BRANCH-$WRT_TARGET-$WRT_SUBTARGET-$WRT_CONFIG"
           WRT_CACHE_KEY="$WRT_CACHE_PREFIX-$(git -C ./wrt rev-parse HEAD)"
           WRT_CACHE_STARTED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -309,8 +309,11 @@ jobs:
 
           # 6. Qualcomm PPE 时钟驱动补丁生效断言
           PPE_DRIVER="target/linux/qualcommax/files/drivers/net/ethernet/qualcomm/qca_ppe_main.c"
-          if [ -f "$PPE_DRIVER" ]; then
-            if ! grep -q "ppe_port_clk_parents" "$PPE_DRIVER"; then
+          if [ -d "target" ]; then
+            if [ ! -f "$PPE_DRIVER" ]; then
+              echo "::error::断言失败: Qualcomm PPE 驱动文件缺失 ($PPE_DRIVER)！"
+              FAIL=1
+            elif ! grep -q "ppe_port_clk_parents" "$PPE_DRIVER"; then
               echo "::error::断言失败: Qualcomm PPE 驱动未成功植入 QCA8081 时钟修复逻辑！"
               FAIL=1
             else
