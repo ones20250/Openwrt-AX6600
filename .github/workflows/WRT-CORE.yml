@@ -141,6 +141,11 @@ jobs:
             echo "src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages" >> feeds.conf.default
           fi
 
+      - name: Fix QCA8081 Port Clocks
+        run: |
+          cd ./wrt/
+          bash "$GITHUB_WORKSPACE/.github/scripts/prepare-qca8081-clock-fix.sh"
+
       - name: Check Scripts
         run: |
           find ./ -maxdepth 3 -type f -iregex ".*\(txt\|sh\)$" -exec dos2unix {} \; -exec chmod +x {} \;
