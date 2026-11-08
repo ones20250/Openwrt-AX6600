@@ -321,6 +321,9 @@ echo "PASS: Settings.sh generates valid 99-ax6600-custom declaring all non-UCI u
 echo "--- Test 7: Verify sysupgrade keep.d integration preserves non-UCI assets during backup and restore ---"
 cp "$CUSTOM_KEEP_PATH" "$TEST5_ROOT/lib/upgrade/keep.d/99-ax6600-custom"
 
+# 创建 SSH 目录内的符号链接（测试软链接资产保护）
+ln -sf authorized_keys "$TEST5_ROOT/root/.ssh/authorized_keys2"
+
 FIXED_BACKUP_LIST="$TMP_DIR/test7_fixed_backup.list"
 : > "$FIXED_BACKUP_LIST"
 
@@ -331,16 +334,16 @@ FIXED_BACKUP_LIST="$TMP_DIR/test7_fixed_backup.list"
         [[ "$pattern" =~ ^# ]] && continue
         rel="${pattern#/}"
         if [ -d "$rel" ]; then
-            find "$rel" -type f >> "$FIXED_BACKUP_LIST"
-        elif [ -f "$rel" ]; then
+            find "$rel" -type f -o -type l >> "$FIXED_BACKUP_LIST"
+        elif [ -e "$rel" ] || [ -L "$rel" ]; then
             echo "$rel" >> "$FIXED_BACKUP_LIST"
         fi
     done < <(cat "$TEST5_ROOT"/lib/upgrade/keep.d/* 2>/dev/null)
     find etc/config -type f >> "$FIXED_BACKUP_LIST"
 )
 
-# 验证清单中包含所有目标非 UCI 资产
-for asset in "etc/docker/daemon.json" "etc/adguardhome.yaml" "root/.ssh/authorized_keys"; do
+# 验证清单中包含所有目标非 UCI 资产（含 SSH 符号链接）
+for asset in "etc/docker/daemon.json" "etc/adguardhome.yaml" "root/.ssh/authorized_keys" "root/.ssh/authorized_keys2"; do
     if ! grep -Fxq "$asset" "$FIXED_BACKUP_LIST"; then
         echo "FAIL: Fixed backup list missing $asset!" >&2
         exit 1
@@ -376,6 +379,13 @@ if [ "$REST_SSH" != "$SSH_KEY" ]; then
     exit 1
 fi
 
+if [ -L "$TEST5_ROOT/root/.ssh/authorized_keys2" ]; then
+    if [ ! -L "$FIXED_RESTORE_DIR/root/.ssh/authorized_keys2" ]; then
+        echo "FAIL: Restored /root/.ssh/authorized_keys2 was not preserved as a symlink!" >&2
+        exit 1
+    fi
+fi
+
 # 测试容错性：当用户尚未配置 adguardhome 时（可选文件不存在），sysupgrade 收集过程绝不报错中断
 rm -f "$TEST5_ROOT/etc/adguardhome.yaml"
 TOLERANCE_LIST="$TMP_DIR/test7_tolerance.list"
@@ -387,8 +397,8 @@ TOLERANCE_LIST="$TMP_DIR/test7_tolerance.list"
         [[ "$pattern" =~ ^# ]] && continue
         rel="${pattern#/}"
         if [ -d "$rel" ]; then
-            find "$rel" -type f >> "$TOLERANCE_LIST"
-        elif [ -f "$rel" ]; then
+            find "$rel" -type f -o -type l >> "$TOLERANCE_LIST"
+        elif [ -e "$rel" ] || [ -L "$rel" ]; then
             echo "$rel" >> "$TOLERANCE_LIST"
         fi
     done < <(cat "$TEST5_ROOT"/lib/upgrade/keep.d/* 2>/dev/null)

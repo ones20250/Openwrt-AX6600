@@ -868,8 +868,11 @@ echo "PASS: Build-time protection verified (exit 1 preserves script in rootfs fo
 
 # 8d: 运行时全新刷机 / 恢复出厂设置场景模拟（无既有 crontab）
 echo "--- Test 8d: Simulate fresh install / factory reset first boot ---"
+
+# 8d-1: /sbin/fstrim 存在场景：必须精准解析为 /sbin/fstrim，且必须启动 cron
 SIM_FSTRIM_FRESH="$TMP_DIR/sim_fstrim_fresh"
-mkdir -p "$SIM_FSTRIM_FRESH/bin" "$SIM_FSTRIM_FRESH/etc/init.d"
+mkdir -p "$SIM_FSTRIM_FRESH/bin" "$SIM_FSTRIM_FRESH/sbin" "$SIM_FSTRIM_FRESH/etc/init.d"
+printf "#!/bin/sh\nexit 0\n" > "$SIM_FSTRIM_FRESH/sbin/fstrim" && chmod +x "$SIM_FSTRIM_FRESH/sbin/fstrim"
 cat << EOF > "$SIM_FSTRIM_FRESH/bin/logger"
 #!/bin/sh
 exit 0
@@ -883,7 +886,7 @@ EOF
 chmod +x "$SIM_FSTRIM_FRESH/etc/init.d/cron"
 
 (
-    export PATH="$SIM_FSTRIM_FRESH/bin:$PATH"
+    export PATH="$SIM_FSTRIM_FRESH/bin:$SIM_FSTRIM_FRESH/sbin:$PATH"
     SIM_ROOT="$SIM_FSTRIM_FRESH" sh "$FSTRIM_UCI_DEFAULT"
 )
 FRESH_EXIT=$?
@@ -897,15 +900,56 @@ if [ ! -f "$CRON_FRESH_FILE" ]; then
     echo "FAIL: 98-default-fstrim did not create crontab file on fresh install!" >&2
     exit 1
 fi
-if ! grep -q "fstrim" "$CRON_FRESH_FILE"; then
-    echo "FAIL: Default weekly fstrim entry was not written to crontab!" >&2
+if ! grep -q "/sbin/fstrim" "$CRON_FRESH_FILE"; then
+    echo "FAIL: Expected /sbin/fstrim in crontab when /sbin/fstrim exists, got: $(cat "$CRON_FRESH_FILE")" >&2
     exit 1
 fi
 if ! grep -q "restart" "$SIM_FSTRIM_FRESH/cron_fresh.log"; then
     echo "FAIL: cron was not started on fresh install!" >&2
     exit 1
 fi
-echo "PASS: Fresh install scenario verified: weekly trim entry created and cron activated."
+
+# 8d-2: 仅 /usr/sbin/fstrim 存在场景：必须精准解析为 /usr/sbin/fstrim
+SIM_FSTRIM_USR="$TMP_DIR/sim_fstrim_usr"
+mkdir -p "$SIM_FSTRIM_USR/bin" "$SIM_FSTRIM_USR/usr/sbin" "$SIM_FSTRIM_USR/etc/init.d"
+printf "#!/bin/sh\nexit 0\n" > "$SIM_FSTRIM_USR/usr/sbin/fstrim" && chmod +x "$SIM_FSTRIM_USR/usr/sbin/fstrim"
+cp "$SIM_FSTRIM_FRESH/bin/logger" "$SIM_FSTRIM_USR/bin/logger"
+(
+    export PATH="$SIM_FSTRIM_USR/bin:$PATH"
+    SIM_ROOT="$SIM_FSTRIM_USR" sh "$FSTRIM_UCI_DEFAULT"
+)
+if ! grep -q "/usr/sbin/fstrim" "$SIM_FSTRIM_USR/etc/crontabs/root"; then
+    echo "FAIL: Expected /usr/sbin/fstrim in crontab when /usr/sbin/fstrim exists, got: $(cat "$SIM_FSTRIM_USR/etc/crontabs/root")" >&2
+    exit 1
+fi
+
+# 8d-3: 二进制文件缺失场景：安全回退为 bare fstrim
+SIM_FSTRIM_NONE="$TMP_DIR/sim_fstrim_none"
+mkdir -p "$SIM_FSTRIM_NONE/bin" "$SIM_FSTRIM_NONE/etc/init.d"
+cp "$SIM_FSTRIM_FRESH/bin/logger" "$SIM_FSTRIM_NONE/bin/logger"
+(
+    export PATH="$SIM_FSTRIM_NONE/bin:$PATH"
+    SIM_ROOT="$SIM_FSTRIM_NONE" sh "$FSTRIM_UCI_DEFAULT"
+)
+if ! grep -E -q "\(fstrim -av" "$SIM_FSTRIM_NONE/etc/crontabs/root"; then
+    echo "FAIL: Expected bare fstrim fallback in crontab when binary not found, got: $(cat "$SIM_FSTRIM_NONE/etc/crontabs/root")" >&2
+    exit 1
+fi
+
+# 8d-4: 沙箱边界测试：SYS_PREFIX 指定但缺少 init.d/cron 时，绝不污染调用宿主 /etc/init.d/cron
+SIM_FSTRIM_ISOLATE="$TMP_DIR/sim_fstrim_isolate"
+mkdir -p "$SIM_FSTRIM_ISOLATE/bin"
+cp "$SIM_FSTRIM_FRESH/bin/logger" "$SIM_FSTRIM_ISOLATE/bin/logger"
+(
+    export PATH="$SIM_FSTRIM_ISOLATE/bin:$PATH"
+    SIM_ROOT="$SIM_FSTRIM_ISOLATE" sh "$FSTRIM_UCI_DEFAULT"
+)
+ISOLATE_EXIT=$?
+if [ "$ISOLATE_EXIT" -ne 0 ]; then
+    echo "FAIL: 98-default-fstrim failed under isolated root (exit: $ISOLATE_EXIT)!" >&2
+    exit 1
+fi
+echo "PASS: Fresh install scenario verified: fstrim path resolution (/sbin, /usr/sbin, fallback) and cron activation."
 
 # 8e: 运行时保留配置升级场景模拟（已有 crontab：0 字节差异，绝不篡改，绝不重启 cron）
 echo "--- Test 8e: Simulate sysupgrade keep-settings scenario (100% untouched crontab) ---"
@@ -962,7 +1006,28 @@ if [ -s "$SIM_EMPTY_ROOT/etc/crontabs/root" ]; then
     echo "FAIL: Empty crontab was unexpectedly written to!" >&2
     exit 1
 fi
-echo "PASS: Preserved upgrade scenario verified: user crontab 100% unchanged (0-byte diff, 0 cron calls)."
+
+# 8e-3: 用户配置了自定义外部/软链 crontab 场景（指向外部或挂载介质上的定时任务）
+SIM_SYMLINK_ROOT="$TMP_DIR/sim_symlink_cron"
+mkdir -p "$SIM_SYMLINK_ROOT/etc/crontabs" "$SIM_SYMLINK_ROOT/mnt/sda1"
+USER_LINK_CONTENT="0 1 * * * /mnt/sda1/ext_backup.sh"
+printf "%s\n" "$USER_LINK_CONTENT" > "$SIM_SYMLINK_ROOT/mnt/sda1/custom_cron"
+ln -sf "$SIM_SYMLINK_ROOT/mnt/sda1/custom_cron" "$SIM_SYMLINK_ROOT/etc/crontabs/root" 2>/dev/null || cp "$SIM_SYMLINK_ROOT/mnt/sda1/custom_cron" "$SIM_SYMLINK_ROOT/etc/crontabs/root"
+HAD_SYMLINK=0
+[ -L "$SIM_SYMLINK_ROOT/etc/crontabs/root" ] && HAD_SYMLINK=1
+
+(
+    SIM_ROOT="$SIM_SYMLINK_ROOT" sh "$FSTRIM_UCI_DEFAULT"
+)
+if [ $HAD_SYMLINK -eq 1 ] && [ ! -L "$SIM_SYMLINK_ROOT/etc/crontabs/root" ]; then
+    echo "FAIL: Symlink crontab was replaced with regular file!" >&2
+    exit 1
+fi
+if [ "$(cat "$SIM_SYMLINK_ROOT/etc/crontabs/root")" != "$USER_LINK_CONTENT" ]; then
+    echo "FAIL: Target of custom crontab was modified!" >&2
+    exit 1
+fi
+echo "PASS: Preserved upgrade scenario verified: user crontab 100% unchanged (0-byte diff, empty file, symlink, 0 cron calls)."
 
 # 8f: 手动触发 /etc/init.d/fstrim start 验证：仅执行 trim，绝不修改 crontabs 或重启 cron
 echo "--- Test 8f: Verify manual /etc/init.d/fstrim start execution safety ---"

@@ -201,8 +201,13 @@ START=99
 
 start() {
 	TRIM_CMD="/sbin/fstrim"
-	[ -x "$TRIM_CMD" ] || TRIM_CMD="/usr/sbin/fstrim"
-	[ -x "$TRIM_CMD" ] || TRIM_CMD="fstrim"
+	if [ -x "/sbin/fstrim" ]; then
+		TRIM_CMD="/sbin/fstrim"
+	elif [ -x "/usr/sbin/fstrim" ]; then
+		TRIM_CMD="/usr/sbin/fstrim"
+	else
+		TRIM_CMD="fstrim"
+	fi
 	$TRIM_CMD -av 2>&1 | logger -t fstrim
 }
 EOF_FSTRIM
@@ -228,19 +233,33 @@ CRON_DIR="$SYS_PREFIX/etc/crontabs"
 CRON_FILE="$CRON_DIR/root"
 
 # 2. 检查是否为保留配置升级 (sysupgrade) 或系统已存在既有定时任务配置：
-# 若检测到 /etc/crontabs/root 已存在（保留配置升级场景，包括用户已自定义修改或主动删除 trim 任务）：
+# 若检测到 /etc/crontabs/root 已存在（保留配置升级场景，包括用户已自定义修改或主动删除 trim 任务，含符号链接）：
 # 严格保持静默，直接退出 0，绝不篡改用户既有定时任务，绝不触发多余的 cron 杀进程重启！
 # 退出 0 后由 OpenWrt 官方 uci-defaults 机制将其自动销毁 (rm -f)，后续绝不反复运行。
-if [ -s "$CRON_FILE" ] || [ -f "$CRON_FILE" ]; then
+if [ -e "$CRON_FILE" ] || [ -L "$CRON_FILE" ]; then
 	exit 0
 fi
 
 # 3. 仅在全新刷机 / 恢复出厂设置（无既有 /etc/crontabs/root）时，创建默认每周 trim 任务并启动 cron
 mkdir -p "$CRON_DIR"
 
-TRIM_CMD="/sbin/fstrim"
-[ -x "$SYS_PREFIX/sbin/fstrim" ] || [ -x "/sbin/fstrim" ] || TRIM_CMD="/usr/sbin/fstrim"
-[ -x "$SYS_PREFIX/usr/sbin/fstrim" ] || [ -x "/usr/sbin/fstrim" ] || TRIM_CMD="fstrim"
+if [ -n "$SYS_PREFIX" ]; then
+	if [ -x "$SYS_PREFIX/sbin/fstrim" ]; then
+		TRIM_CMD="/sbin/fstrim"
+	elif [ -x "$SYS_PREFIX/usr/sbin/fstrim" ]; then
+		TRIM_CMD="/usr/sbin/fstrim"
+	else
+		TRIM_CMD="fstrim"
+	fi
+else
+	if [ -x "/sbin/fstrim" ]; then
+		TRIM_CMD="/sbin/fstrim"
+	elif [ -x "/usr/sbin/fstrim" ]; then
+		TRIM_CMD="/usr/sbin/fstrim"
+	else
+		TRIM_CMD="fstrim"
+	fi
+fi
 
 cat << EOF > "$CRON_FILE"
 0 4 * * 0 ($TRIM_CMD -av 2>&1 | logger -t fstrim)
@@ -248,7 +267,9 @@ EOF
 chmod 600 "$CRON_FILE" 2>/dev/null || true
 
 CRON_INIT="/etc/init.d/cron"
-[ -n "$SYS_PREFIX" ] && [ -x "$SYS_PREFIX/etc/init.d/cron" ] && CRON_INIT="$SYS_PREFIX/etc/init.d/cron"
+if [ -n "$SYS_PREFIX" ]; then
+	CRON_INIT="$SYS_PREFIX/etc/init.d/cron"
+fi
 if [ -x "$CRON_INIT" ]; then
 	"$CRON_INIT" enable 2>/dev/null || true
 	"$CRON_INIT" restart 2>/dev/null || true
