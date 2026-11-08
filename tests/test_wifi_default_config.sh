@@ -789,93 +789,226 @@ fi
 echo "PASS: Build-time protection verified: 99-default-wifi remains intact in rootfs for target first boot."
 
 # -----------------------------------------------------------------------------
-# 8. 闪存磨损保护与 fstrim 定时调度验证
+# 8. 闪存磨损保护与 fstrim 定时调度架构归位验证
 # -----------------------------------------------------------------------------
 echo "--- Test 8: Verify fstrim flash wear leveling scheduler and initialization ---"
 FSTRIM_INIT_FILE="$MOCK_BUILD_TREE/package/base-files/files/etc/init.d/fstrim"
 FSTRIM_RCD_FILE="$MOCK_BUILD_TREE/package/base-files/files/etc/rc.d/S99fstrim"
 FSTRIM_UCI_DEFAULT="$MOCK_BUILD_TREE/package/base-files/files/etc/uci-defaults/98-default-fstrim"
+CUSTOM_KEEP_FILE="$MOCK_BUILD_TREE/package/base-files/files/lib/upgrade/keep.d/99-ax6600-custom"
 
-if [ ! -x "$FSTRIM_INIT_FILE" ]; then
-    echo "FAIL: $FSTRIM_INIT_FILE is missing or not executable!" >&2
+# 8a: 前置复现验证：复现原 fstrim start 每次开机强行复活已被用户删除的 crontab 条目与无条件重启 cron
+echo "--- Test 8a: Bug reproduction: prove legacy S99fstrim resurrects deleted crontabs and perturbs cron process ---"
+BUG_CRON_DIR="$TMP_DIR/sim_bug_cron"
+mkdir -p "$BUG_CRON_DIR/etc/crontabs" "$BUG_CRON_DIR/bin"
+cat << 'EOF_MOCK_CRON' > "$BUG_CRON_DIR/bin/cron_mock"
+#!/bin/sh
+echo "$*" >> "$CRON_LOG"
+exit 0
+EOF_MOCK_CRON
+chmod +x "$BUG_CRON_DIR/bin/cron_mock"
+
+# 用户自主删除了 fstrim 任务，保留了其他自定义备份任务，或清空了 crontab
+printf "30 2 * * * /usr/bin/my_backup.sh\n" > "$BUG_CRON_DIR/etc/crontabs/root"
+export CRON_LOG="$BUG_CRON_DIR/cron_calls.log"
+: > "$CRON_LOG"
+
+# 模拟旧版 /etc/init.d/fstrim start 逻辑：无条件检查并在缺 fstrim 时强行追加，且无条件重启 cron
+(
+    CRON_FILE="$BUG_CRON_DIR/etc/crontabs/root"
+    TRIM_ENTRY="0 4 * * 0 (/sbin/fstrim -av 2>&1 | logger -t fstrim)"
+    if ! grep -q "fstrim" "$CRON_FILE"; then
+        [ -n "$(tail -c 1 "$CRON_FILE" 2>/dev/null)" ] && echo "" >> "$CRON_FILE"
+        echo "$TRIM_ENTRY" >> "$CRON_FILE"
+    fi
+    "$BUG_CRON_DIR/bin/cron_mock" enable
+    "$BUG_CRON_DIR/bin/cron_mock" restart
+)
+
+# 断言：旧版逻辑无情破坏用户意图，复活了 fstrim 条目并触发了多余的 cron 杀进程重启
+if ! grep -q "fstrim" "$BUG_CRON_DIR/etc/crontabs/root"; then
+    echo "FAIL: Expected old logic to resurrect fstrim entry!" >&2
     exit 1
 fi
-if [ ! -e "$FSTRIM_RCD_FILE" ]; then
-    echo "FAIL: Pre-enabled service entry $FSTRIM_RCD_FILE is missing!" >&2
+if ! grep -q "restart" "$CRON_LOG"; then
+    echo "FAIL: Expected old logic to restart cron!" >&2
+    exit 1
+fi
+echo "PASS: Confirmed bug reproduction: legacy fstrim boot service unconditionally resurrects user-deleted crontab entries and restarts crond on every boot."
+
+# 8b: 架构合规性验证：确认开机常驻软链接 S99fstrim 彻底移除，且 uci-defaults 脚本生成合规
+echo "--- Test 8b: Architecture verification: S99fstrim symlink removed and uci-defaults created ---"
+if [ -e "$FSTRIM_RCD_FILE" ]; then
+    echo "FAIL: S99fstrim symlink ($FSTRIM_RCD_FILE) must NOT exist!" >&2
     exit 1
 fi
 if [ ! -x "$FSTRIM_UCI_DEFAULT" ]; then
     echo "FAIL: $FSTRIM_UCI_DEFAULT is missing or not executable!" >&2
     exit 1
 fi
+if [ ! -x "$FSTRIM_INIT_FILE" ]; then
+    echo "FAIL: $FSTRIM_INIT_FILE is missing or not executable!" >&2
+    exit 1
+fi
 
 sh -n "$FSTRIM_INIT_FILE" || { echo "FAIL: Syntax error in fstrim init script!"; exit 1; }
 sh -n "$FSTRIM_UCI_DEFAULT" || { echo "FAIL: Syntax error in 98-default-fstrim!"; exit 1; }
 
-# 模拟运行时执行 fstrim start (全新系统无 crontab 场景)
-SIM_FSTRIM_ROOT="$TMP_DIR/sim_fstrim"
-mkdir -p "$SIM_FSTRIM_ROOT/bin" "$SIM_FSTRIM_ROOT/etc/crontabs"
-cat << 'EOF' > "$SIM_FSTRIM_ROOT/bin/logger"
+# 8c: 构建期 IPKG_INSTROOT 防护断言：返回 1 阻止 rootfs 构建时提前删除
+echo "--- Test 8c: Verify 98-default-fstrim rootfs build-time IPKG_INSTROOT protection ---"
+set +e
+IPKG_INSTROOT="$TMP_DIR/mock_instroot" sh "$FSTRIM_UCI_DEFAULT" >/dev/null 2>&1
+INSTROOT_EXIT=$?
+set -e
+if [ "$INSTROOT_EXIT" -ne 1 ]; then
+    echo "FAIL: 98-default-fstrim must exit 1 under IPKG_INSTROOT (actual: $INSTROOT_EXIT)!" >&2
+    exit 1
+fi
+echo "PASS: Build-time protection verified (exit 1 preserves script in rootfs for target first boot)."
+
+# 8d: 运行时全新刷机 / 恢复出厂设置场景模拟（无既有 crontab）
+echo "--- Test 8d: Simulate fresh install / factory reset first boot ---"
+SIM_FSTRIM_FRESH="$TMP_DIR/sim_fstrim_fresh"
+mkdir -p "$SIM_FSTRIM_FRESH/bin" "$SIM_FSTRIM_FRESH/etc/init.d"
+cat << EOF > "$SIM_FSTRIM_FRESH/bin/logger"
 #!/bin/sh
 exit 0
 EOF
-chmod +x "$SIM_FSTRIM_ROOT/bin/logger"
+chmod +x "$SIM_FSTRIM_FRESH/bin/logger"
+cat << EOF > "$SIM_FSTRIM_FRESH/etc/init.d/cron"
+#!/bin/sh
+echo "\$*" >> "$SIM_FSTRIM_FRESH/cron_fresh.log"
+exit 0
+EOF
+chmod +x "$SIM_FSTRIM_FRESH/etc/init.d/cron"
 
 (
-    export CRON_DIR="$SIM_FSTRIM_ROOT/etc/crontabs"
-    export PATH="$SIM_FSTRIM_ROOT/bin:$PATH"
-    sh -c ". '$FSTRIM_INIT_FILE' && start"
+    export PATH="$SIM_FSTRIM_FRESH/bin:$PATH"
+    SIM_ROOT="$SIM_FSTRIM_FRESH" sh "$FSTRIM_UCI_DEFAULT"
 )
-
-CRON_OUT="$SIM_FSTRIM_ROOT/etc/crontabs/root"
-if [ ! -f "$CRON_OUT" ]; then
-    echo "FAIL: fstrim start did not create crontab file!" >&2
-    exit 1
-fi
-if ! grep -q "fstrim" "$CRON_OUT"; then
-    echo "FAIL: fstrim entry was not written to crontab!" >&2
+FRESH_EXIT=$?
+if [ "$FRESH_EXIT" -ne 0 ]; then
+    echo "FAIL: 98-default-fstrim failed on fresh install (exit: $FRESH_EXIT)!" >&2
     exit 1
 fi
 
-# 模拟保留配置升级场景：用户已有定时任务且末尾无换行符，验证不破坏既有任务并不拼接错位
+CRON_FRESH_FILE="$SIM_FSTRIM_FRESH/etc/crontabs/root"
+if [ ! -f "$CRON_FRESH_FILE" ]; then
+    echo "FAIL: 98-default-fstrim did not create crontab file on fresh install!" >&2
+    exit 1
+fi
+if ! grep -q "fstrim" "$CRON_FRESH_FILE"; then
+    echo "FAIL: Default weekly fstrim entry was not written to crontab!" >&2
+    exit 1
+fi
+if ! grep -q "restart" "$SIM_FSTRIM_FRESH/cron_fresh.log"; then
+    echo "FAIL: cron was not started on fresh install!" >&2
+    exit 1
+fi
+echo "PASS: Fresh install scenario verified: weekly trim entry created and cron activated."
+
+# 8e: 运行时保留配置升级场景模拟（已有 crontab：0 字节差异，绝不篡改，绝不重启 cron）
+echo "--- Test 8e: Simulate sysupgrade keep-settings scenario (100% untouched crontab) ---"
 SIM_FSTRIM_PRESERVE="$TMP_DIR/sim_fstrim_preserve"
-mkdir -p "$SIM_FSTRIM_PRESERVE/etc/crontabs"
+mkdir -p "$SIM_FSTRIM_PRESERVE/bin" "$SIM_FSTRIM_PRESERVE/etc/crontabs" "$SIM_FSTRIM_PRESERVE/etc/init.d"
 USER_CRON_CONTENT="30 2 * * * /usr/bin/my_nightly_backup.sh"
-printf "%s" "$USER_CRON_CONTENT" > "$SIM_FSTRIM_PRESERVE/etc/crontabs/root"
+printf "%s\n" "$USER_CRON_CONTENT" > "$SIM_FSTRIM_PRESERVE/etc/crontabs/root"
+PRESERVE_CRON_FILE="$SIM_FSTRIM_PRESERVE/etc/crontabs/root"
+ORIG_HASH=$(sha256sum "$PRESERVE_CRON_FILE" | awk '{print $1}')
+ORIG_SIZE=$(wc -c < "$PRESERVE_CRON_FILE")
+
+cat << EOF > "$SIM_FSTRIM_PRESERVE/etc/init.d/cron"
+#!/bin/sh
+echo "FORBIDDEN_CALL: \$*" >> "$SIM_FSTRIM_PRESERVE/cron_forbidden.log"
+exit 0
+EOF
+chmod +x "$SIM_FSTRIM_PRESERVE/etc/init.d/cron"
 
 (
-    export CRON_DIR="$SIM_FSTRIM_PRESERVE/etc/crontabs"
-    export PATH="$SIM_FSTRIM_ROOT/bin:$PATH"
-    sh -c ". '$FSTRIM_INIT_FILE' && start"
+    export PATH="$SIM_FSTRIM_PRESERVE/bin:$PATH"
+    SIM_ROOT="$SIM_FSTRIM_PRESERVE" sh "$FSTRIM_UCI_DEFAULT"
 )
-
-PRESERVED_CRON="$SIM_FSTRIM_PRESERVE/etc/crontabs/root"
-FIRST_LINE="$(head -n 1 "$PRESERVED_CRON")"
-if [ "$FIRST_LINE" != "$USER_CRON_CONTENT" ]; then
-    echo "FAIL: Existing user cron entry was corrupted or concatenated incorrectly!" >&2
-    echo "Expected: $USER_CRON_CONTENT" >&2
-    echo "Actual:   $FIRST_LINE" >&2
-    exit 1
-fi
-if ! grep -q "fstrim" "$PRESERVED_CRON"; then
-    echo "FAIL: fstrim entry was not appended to preserved crontab!" >&2
+PRESERVE_EXIT=$?
+if [ "$PRESERVE_EXIT" -ne 0 ]; then
+    echo "FAIL: 98-default-fstrim failed on preserved upgrade (exit: $PRESERVE_EXIT)!" >&2
     exit 1
 fi
 
-# 幂等性测试：重复运行 start，验证定时任务仅存在 1 份，严禁重复膨胀
+NEW_HASH=$(sha256sum "$PRESERVE_CRON_FILE" | awk '{print $1}')
+NEW_SIZE=$(wc -c < "$PRESERVE_CRON_FILE")
+
+if [ "$ORIG_HASH" != "$NEW_HASH" ] || [ "$ORIG_SIZE" -ne "$NEW_SIZE" ]; then
+    echo "FAIL: Preserved user crontab was modified during sysupgrade!" >&2
+    diff -u <(echo "$USER_CRON_CONTENT") "$PRESERVE_CRON_FILE" >&2 || true
+    exit 1
+fi
+if grep -q "fstrim" "$PRESERVE_CRON_FILE"; then
+    echo "FAIL: fstrim was erroneously injected into preserved user crontab!" >&2
+    exit 1
+fi
+if [ -f "$SIM_FSTRIM_PRESERVE/cron_forbidden.log" ]; then
+    echo "FAIL: cron service was touched during preserved upgrade: $(cat "$SIM_FSTRIM_PRESERVE/cron_forbidden.log")" >&2
+    exit 1
+fi
+
+# 8e-2: 用户配置了 0 字节空 crontab 文件场景（已删除全部任务）
+SIM_EMPTY_ROOT="$TMP_DIR/sim_empty_cron"
+mkdir -p "$SIM_EMPTY_ROOT/etc/crontabs"
+touch "$SIM_EMPTY_ROOT/etc/crontabs/root"
 (
-    export CRON_DIR="$SIM_FSTRIM_PRESERVE/etc/crontabs"
-    export PATH="$SIM_FSTRIM_ROOT/bin:$PATH"
-    sh -c ". '$FSTRIM_INIT_FILE' && start"
+    SIM_ROOT="$SIM_EMPTY_ROOT" sh "$FSTRIM_UCI_DEFAULT"
 )
-
-FSTRIM_COUNT="$(grep -c "fstrim" "$PRESERVED_CRON" || true)"
-if [ "$FSTRIM_COUNT" -ne 1 ]; then
-    echo "FAIL: Duplicate fstrim entries found in crontab (count: $FSTRIM_COUNT, expected: 1)!" >&2
-    cat "$PRESERVED_CRON" >&2
+if [ -s "$SIM_EMPTY_ROOT/etc/crontabs/root" ]; then
+    echo "FAIL: Empty crontab was unexpectedly written to!" >&2
     exit 1
 fi
-echo "PASS: fstrim service, pre-enabled symlink, preserved crontab protection, and idempotency verified."
+echo "PASS: Preserved upgrade scenario verified: user crontab 100% unchanged (0-byte diff, 0 cron calls)."
+
+# 8f: 手动触发 /etc/init.d/fstrim start 验证：仅执行 trim，绝不修改 crontabs 或重启 cron
+echo "--- Test 8f: Verify manual /etc/init.d/fstrim start execution safety ---"
+MANUAL_ROOT="$TMP_DIR/sim_manual_fstrim"
+mkdir -p "$MANUAL_ROOT/bin" "$MANUAL_ROOT/etc/crontabs"
+cat << EOF > "$MANUAL_ROOT/bin/logger"
+#!/bin/sh
+echo "\$*" >> "$MANUAL_ROOT/logger.log"
+exit 0
+EOF
+chmod +x "$MANUAL_ROOT/bin/logger"
+cat << EOF > "$MANUAL_ROOT/bin/fstrim"
+#!/bin/sh
+echo "TRIMMED" >> "$MANUAL_ROOT/trimmed.log"
+exit 0
+EOF
+chmod +x "$MANUAL_ROOT/bin/fstrim"
+
+printf "45 1 * * * /bin/custom.sh\n" > "$MANUAL_ROOT/etc/crontabs/root"
+(
+    export PATH="$MANUAL_ROOT/bin:$PATH"
+    sh -c ". '$FSTRIM_INIT_FILE' && start"
+)
+if [ ! -f "$MANUAL_ROOT/trimmed.log" ]; then
+    echo "FAIL: Manual fstrim start did not invoke fstrim command!" >&2
+    exit 1
+fi
+if grep -q "fstrim" "$MANUAL_ROOT/etc/crontabs/root"; then
+    echo "FAIL: Manual fstrim start altered crontab file!" >&2
+    exit 1
+fi
+echo "PASS: Manual fstrim start safely executes trim without altering crontabs or service states."
+
+# 8g: 预置 keep.d 资产保护文件生成校验
+echo "--- Test 8g: Verify Settings.sh creates package/base-files/files/lib/upgrade/keep.d/99-ax6600-custom ---"
+if [ ! -f "$CUSTOM_KEEP_FILE" ]; then
+    echo "FAIL: $CUSTOM_KEEP_FILE was not created by Settings.sh!" >&2
+    exit 1
+fi
+for req_path in "/etc/docker/daemon.json" "/etc/adguardhome.yaml" "/root/.ssh/"; do
+    if ! grep -Fxq "$req_path" "$CUSTOM_KEEP_FILE"; then
+        echo "FAIL: $CUSTOM_KEEP_FILE missing declared path $req_path!" >&2
+        exit 1
+    fi
+done
+echo "PASS: 99-ax6600-custom keep.d whitelist correctly generated with all required non-UCI assets."
 
 # -----------------------------------------------------------------------------
 # 9. 现代 ucode 模板 (mac80211.uc) 与经典 shell 模板 (mac80211.sh) 原生修改验证
