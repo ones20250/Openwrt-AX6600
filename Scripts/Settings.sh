@@ -28,17 +28,67 @@ apply_sed_to_matches "./feeds/luci/modules/luci-mod-status/" "10_system.js" "s/(
 
 # =========================================================
 # WiFi 默认配置与安全加固：
-# 1. 兼容现代 ucode 模板 (mac80211.uc)，若源码中存在则同步写入默认配置
-# 2. 注入 uci-defaults 脚本 (99-default-wifi)，确保三频首次冷启动合规生效
+# 1. 兼容现代 ucode 模板 (mac80211.uc) 与经典 shell 模板 (mac80211.sh)，源码构建期原生植入默认配置
+# 2. 注入 uci-defaults 脚本 (99-default-wifi)，仅在全新刷机/无既有配置时生效，保留配置升级绝不破坏用户既有配置
 # =========================================================
 TARGET_SSID="${WRT_SSID:-OWRT}"
 TARGET_WORD="${WRT_WORD:-12345678}"
 
-WIFI_UC="./package/network/config/wifi-scripts/files/lib/wifi/mac80211.uc"
-if [ -f "$WIFI_UC" ]; then
-	# 兼容现代 ucode 语法模板修改默认 SSID 与加密 (针对 mac80211.uc)
-	sed -i "s/ssid: '[^']*'/ssid: '$TARGET_SSID'/g" "$WIFI_UC" 2>/dev/null || true
-	sed -i "s/encryption: 'none'/encryption: 'psk2',\n\t\tkey: '$TARGET_WORD'/g" "$WIFI_UC" 2>/dev/null || true
+escape_sed() {
+	local str="$1"
+	str="${str//\\/\\\\}"
+	str="${str//&/\\&}"
+	str="${str//\//\\/}"
+	printf '%s' "$str"
+}
+
+escape_ucode_str() {
+	local str="$1"
+	str="${str//\\/\\\\}"
+	str="${str//\'/\\\'}"
+	printf '%s' "$str"
+}
+
+escape_sh_uci_str() {
+	local str="$1"
+	if [[ "$str" == *"'"* ]]; then
+		str="${str//\\/\\\\}"
+		str="${str//\"/\\\"}"
+		str="${str//\$/\\\$}"
+		printf '"%s"' "$str"
+	else
+		printf "'%s'" "$str"
+	fi
+}
+
+patch_wifi_template() {
+	local TPL="$1"
+	[ -f "$TPL" ] || return 0
+	if [[ "$TPL" == *".uc" ]]; then
+		local safe_ssid safe_key
+		safe_ssid=$(escape_sed "$(escape_ucode_str "$TARGET_SSID")")
+		safe_key=$(escape_sed "$(escape_ucode_str "$TARGET_WORD")")
+		sed -i "s/ssid: ['\"][^'\"]*['\"]/ssid: '$safe_ssid'/g" "$TPL" 2>/dev/null || true
+		sed -i "s/encryption: ['\"]none['\"]/encryption: 'psk2',\n\t\tkey: '$safe_key'/g" "$TPL" 2>/dev/null || true
+		sed -i "s/disabled:[[:space:]]*1/disabled: 0,\n\t\tcountry: 'CN'/g" "$TPL" 2>/dev/null || true
+	elif [[ "$TPL" == *".sh" ]]; then
+		local safe_ssid safe_key
+		safe_ssid=$(escape_sed "$(escape_sh_uci_str "$TARGET_SSID")")
+		safe_key=$(escape_sed "$(escape_sh_uci_str "$TARGET_WORD")")
+		sed -i "s/option disabled ['\"]\?1['\"]\?/option disabled '0'\n\t\toption country 'CN'/g" "$TPL" 2>/dev/null || true
+		sed -i "s/option ssid ['\"]\?[^'\"]*['\"]\?/option ssid $safe_ssid/g" "$TPL" 2>/dev/null || true
+		sed -i "s/option encryption ['\"]\?none['\"]\?/option encryption 'psk2'\n\t\toption key $safe_key/g" "$TPL" 2>/dev/null || true
+	fi
+}
+
+MATCH_TPLS=$(find ./package ./feeds -type f \( -name "mac80211.sh" -o -name "mac80211.uc" \) 2>/dev/null || true)
+if [ -n "$MATCH_TPLS" ]; then
+	while IFS= read -r match_tpl; do
+		[ -n "$match_tpl" ] && patch_wifi_template "$match_tpl"
+	done <<< "$MATCH_TPLS"
+else
+	WIFI_UC="./package/network/config/wifi-scripts/files/lib/wifi/mac80211.uc"
+	patch_wifi_template "$WIFI_UC"
 fi
 
 WIFI_DEFAULTS_DIR="./package/base-files/files/etc/uci-defaults"
@@ -64,6 +114,14 @@ if [ -n "$IPKG_INSTROOT" ]; then
 	[ -f "$IPKG_INSTROOT/etc/config/wireless" ] || exit 1
 fi
 
+# 检查是否为保留配置升级 (sysupgrade) 或系统已存在既有无线配置：
+# 在保留配置升级场景下，/etc/config/wireless 会在系统启动前被 sysupgrade 备份还原。
+# 出厂默认值（OWRT / 12345678）仅供全新刷机或恢复出厂设置（无既有无线配置）首次使用，
+# 严禁篡改或覆盖用户的自定义 SSID、密码、加密协议及射频参数！
+if [ -s "$SYS_PREFIX/etc/config/wireless" ] || [ -f "$SYS_PREFIX/etc/config/wireless" ]; then
+	exit 0
+fi
+
 WIFI_CMD="/sbin/wifi"
 if [ -n "$SYS_PREFIX" ] && [ -x "$SYS_PREFIX/sbin/wifi" ]; then
 	WIFI_CMD="$SYS_PREFIX/sbin/wifi"
@@ -75,11 +133,10 @@ elif ! [ -x "$WIFI_CMD" ]; then
 	fi
 fi
 
-if [ ! -f "$SYS_PREFIX/etc/config/wireless" ]; then
-	"$WIFI_CMD" config 2>/dev/null || true
-fi
+# 全新刷机 / 恢复出厂设置场景：调用 wifi config 探测并生成初始无线配置
+"$WIFI_CMD" config 2>/dev/null || true
 
-[ -f "$SYS_PREFIX/etc/config/wireless" ] || exit 0
+[ -s "$SYS_PREFIX/etc/config/wireless" ] || exit 0
 
 UCI_CMD="uci"
 if [ -n "$SYS_PREFIX" ]; then
@@ -136,7 +193,7 @@ cat << 'EOF_FSTRIM' > "$FSTRIM_INIT"
 START=99
 
 start() {
-	CRON_DIR="/etc/crontabs"
+	CRON_DIR="${CRON_DIR:-/etc/crontabs}"
 	CRON_FILE="$CRON_DIR/root"
 	TRIM_CMD="/sbin/fstrim"
 	[ -x "$TRIM_CMD" ] || TRIM_CMD="/usr/sbin/fstrim"
@@ -146,8 +203,11 @@ start() {
 	mkdir -p "$CRON_DIR"
 	if [ ! -f "$CRON_FILE" ]; then
 		echo "$TRIM_ENTRY" > "$CRON_FILE"
+		chmod 600 "$CRON_FILE" 2>/dev/null || true
 	elif ! grep -q "fstrim" "$CRON_FILE"; then
+		[ -n "$(tail -c 1 "$CRON_FILE" 2>/dev/null)" ] && echo "" >> "$CRON_FILE"
 		echo "$TRIM_ENTRY" >> "$CRON_FILE"
+		chmod 600 "$CRON_FILE" 2>/dev/null || true
 	fi
 	/etc/init.d/cron enable 2>/dev/null || true
 	/etc/init.d/cron restart 2>/dev/null || true
