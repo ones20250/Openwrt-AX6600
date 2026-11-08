@@ -293,4 +293,111 @@ fi
 echo "PASS: PURE profile target tree PPE driver with clock fix succeeded (exit code 0)."
 rm -rf "$TMP_DIR/target"
 
-echo "=== All Intent-Aware Dynamic Assertion Regression Tests Passed! ==="
+# -----------------------------------------------------------------------------
+# 12. 校验 firewall4 与雅典娜目标设备架构断言逻辑
+# -----------------------------------------------------------------------------
+echo "--- Case: Verify firewall4 and Athena target device assertion extraction ---"
+FIREWALL_ASSERT_SNIPPET="$(awk '/# 4\. 检查 PPE 硬件流表/{flag=1; next} flag && /# 5\. PLUS/{flag=0} flag' "$WORKFLOW_FILE")"
+if [ -z "$FIREWALL_ASSERT_SNIPPET" ]; then
+    echo "FAIL: Failed to extract firewall4 / target device assertion block from $WORKFLOW_FILE!" >&2
+    exit 1
+fi
+
+FW_TEST_SCRIPT="$TMP_DIR/run_fw_assert.sh"
+cat << 'EOF' > "$FW_TEST_SCRIPT"
+#!/usr/bin/env bash
+set -e
+CONFIG_FILE="$1"
+FAIL=0
+cd "$(dirname "$CONFIG_FILE")"
+EOF
+echo "$FIREWALL_ASSERT_SNIPPET" >> "$FW_TEST_SCRIPT"
+cat << 'EOF' >> "$FW_TEST_SCRIPT"
+if [[ $FAIL -ne 0 ]]; then
+    exit 1
+fi
+exit 0
+EOF
+chmod +x "$FW_TEST_SCRIPT"
+
+# 12a. 全量合法配置：PPE offload, luci-app-firewall, firewall4, jdcloud_re-cs-02 均在场
+cat << 'EOF' > "$TMP_DIR/.config"
+CONFIG_PACKAGE_kmod-nft-offload=y
+CONFIG_PACKAGE_luci-app-firewall=y
+CONFIG_PACKAGE_firewall4=y
+CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-02=y
+EOF
+set +e
+"$BASH_BIN" "$FW_TEST_SCRIPT" "$TMP_DIR/.config" > "$TMP_DIR/output.log" 2>&1
+ACTUAL_EXIT=$?
+set -e
+if [ "$ACTUAL_EXIT" -ne 0 ]; then
+    echo "FAIL: Valid firewall4 and target device config expected exit 0, but got $ACTUAL_EXIT" >&2
+    cat "$TMP_DIR/output.log" >&2
+    exit 1
+fi
+echo "PASS: Valid firewall4 and target device assertions passed."
+
+# 12b. 故障注入：缺少 CONFIG_PACKAGE_firewall4=y 时必须被拦截阻断
+cat << 'EOF' > "$TMP_DIR/.config"
+CONFIG_PACKAGE_kmod-nft-offload=y
+CONFIG_PACKAGE_luci-app-firewall=y
+CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-02=y
+EOF
+set +e
+"$BASH_BIN" "$FW_TEST_SCRIPT" "$TMP_DIR/.config" > "$TMP_DIR/output.log" 2>&1
+ACTUAL_EXIT=$?
+set -e
+if [ "$ACTUAL_EXIT" -ne 1 ]; then
+    echo "FAIL: Missing firewall4 expected exit 1, but got $ACTUAL_EXIT" >&2
+    cat "$TMP_DIR/output.log" >&2
+    exit 1
+fi
+if ! grep -q "CONFIG_PACKAGE_firewall4 未入选" "$TMP_DIR/output.log"; then
+    echo "FAIL: Error message did not report missing firewall4: $(cat "$TMP_DIR/output.log")" >&2
+    exit 1
+fi
+echo "PASS: Missing firewall4 assertion correctly triggered (exit code 1)."
+
+# 12c. 故障注入：缺少目标机型 CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-02=y 时必须被拦截阻断
+cat << 'EOF' > "$TMP_DIR/.config"
+CONFIG_PACKAGE_kmod-nft-offload=y
+CONFIG_PACKAGE_luci-app-firewall=y
+CONFIG_PACKAGE_firewall4=y
+EOF
+set +e
+"$BASH_BIN" "$FW_TEST_SCRIPT" "$TMP_DIR/.config" > "$TMP_DIR/output.log" 2>&1
+ACTUAL_EXIT=$?
+set -e
+if [ "$ACTUAL_EXIT" -ne 1 ]; then
+    echo "FAIL: Missing target device expected exit 1, but got $ACTUAL_EXIT" >&2
+    cat "$TMP_DIR/output.log" >&2
+    exit 1
+fi
+if ! grep -q "CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-02 未入选" "$TMP_DIR/output.log"; then
+    echo "FAIL: Error message did not report missing target device: $(cat "$TMP_DIR/output.log")" >&2
+    exit 1
+fi
+echo "PASS: Missing target device assertion correctly triggered (exit code 1)."
+
+# -----------------------------------------------------------------------------
+# 13. Actions 工作流权限收缩至最小权限验证 (杜绝 write-all 高危权限)
+# -----------------------------------------------------------------------------
+echo "--- Case: Verify Actions workflow permissions minimization ---"
+WORKFLOW_DIR="$REPO_ROOT/.github/workflows"
+if grep -rn "permissions:[[:space:]]*write-all" "$WORKFLOW_DIR"; then
+    echo "FAIL: Found leftover 'permissions: write-all' in workflows!" >&2
+    exit 1
+fi
+
+for WF in "$WORKFLOW_DIR"/*.yml; do
+    if ! grep -q "permissions:" "$WF"; then
+        echo "FAIL: Workflow $WF missing explicit 'permissions:' specification!" >&2
+        exit 1
+    fi
+done
+echo "PASS: All Actions workflows strictly minimized (0 instances of write-all)."
+
+echo "================================================================================"
+echo "=== All Intent-Aware Dynamic Assertion & Security Regression Tests Passed! ==="
+echo "================================================================================"

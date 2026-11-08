@@ -45,6 +45,10 @@ on:
         required: false
         type: string
 
+permissions:
+  contents: write
+  actions: write
+
 env:
   GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
   WRT_CONFIG: ${{inputs.WRT_CONFIG}}
@@ -78,13 +82,7 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get -yqq purge firefox
           sudo apt-get -yqq update
-          sudo apt-get -yqq full-upgrade
-          sudo apt-get -yqq autoremove --purge
-          sudo apt-get -yqq autoclean
-          sudo apt-get -yqq clean
-
           sudo apt-get install -y --no-install-recommends \
             bc bison build-essential bzip2 ca-certificates ccache clang \
             cmake cpio curl device-tree-compiler dos2unix file flex \
@@ -93,6 +91,7 @@ jobs:
             llvm ninja-build patch perl pkgconf python3 python3-cryptography \
             python3-dev python3-packaging python3-pyelftools python3-setuptools qemu-utils rsync swig \
             unzip wget xz-utils zlib1g-dev zstd
+          sudo apt-get -yqq clean
 
           sudo timedatectl set-timezone "Asia/Shanghai"
 
@@ -275,13 +274,21 @@ jobs:
             FAIL=1
           fi
 
-          # 4. 检查 PPE 硬件流表与 LuCI 防火墙核心
+          # 4. 检查 PPE 硬件流表与 LuCI 防火墙核心 (包含 firewall4 与目标机型)
           if ! grep -q "^CONFIG_PACKAGE_kmod-nft-offload=y" .config; then
             echo "::error::断言失败: CONFIG_PACKAGE_kmod-nft-offload 未入选！"
             FAIL=1
           fi
           if ! grep -q "^CONFIG_PACKAGE_luci-app-firewall=y" .config; then
             echo "::error::断言失败: CONFIG_PACKAGE_luci-app-firewall 未入选！"
+            FAIL=1
+          fi
+          if ! grep -q "^CONFIG_PACKAGE_firewall4=y" .config; then
+            echo "::error::断言失败: CONFIG_PACKAGE_firewall4 未入选！"
+            FAIL=1
+          fi
+          if ! grep -q "^CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-02=y" .config; then
+            echo "::error::断言失败: 目标设备 CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-02 未入选！"
             FAIL=1
           fi
 

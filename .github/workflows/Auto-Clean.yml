@@ -7,7 +7,9 @@ on:
   #手动清理
   workflow_dispatch:
 
-permissions: write-all
+permissions:
+  contents: write
+  actions: write
 
 jobs:
   auto_clean:

@@ -34,9 +34,10 @@ if [ -z "$BASH_BIN" ] || ! "$BASH_BIN" -c "true" 2>/dev/null; then
     fi
 fi
 
-# 待执行的 6 个核心单元与回归测试脚本列表 (按序执行)
+# 待执行的 7 个核心单元与回归测试脚本列表 (按序执行)
 TEST_SUITES=(
-    "test_config_assertion.sh:CI 配置断言与意图感知回归测试 (PLUS 插件 & PPE 驱动)"
+    "test_config_assertion.sh:CI 配置断言与意图感知回归测试 (PLUS 插件 & PPE 驱动 & firewall4 & 目标机型)"
+    "test_wifi_default_config.sh:WiFi 默认配置注入与三频合规初始化回归测试"
     "test_qca8081_clock_fix.sh:Qualcomm PPE QCA8081 时钟补丁集成回归测试"
     "test_wolultra_configuration.sh:wolultra 网络唤醒插件配置与 CI 断言回归测试"
     "test_ci_defconfig_exit.sh:CI 构建流程 defconfig 退出码阻断回归测试"

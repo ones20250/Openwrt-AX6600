@@ -5,17 +5,16 @@ on:
    # - cron: 0 20 * * 0
   workflow_dispatch:
 
-permissions: write-all
+permissions:
+  actions: write
 
 env:
   GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
+  GH_REPO: ${{github.repository}}
 
 jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Projects
-        uses: actions/checkout@main
-
       - name: Cache Clean
-        run: gh cache delete --all
+        run: gh cache delete --all --succeed-on-no-caches || true

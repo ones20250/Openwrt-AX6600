@@ -145,7 +145,11 @@ CONFIG_PACKAGE_luci-app-athena-led=y
 
 # 建议开启自动挂载，方便识别 eMMC 分区
 CONFIG_PACKAGE_block-mount=y
-CONFIG_PACKAGE_luci-app-mountd=y
+# 清理与现代 block-mount / fstools 冲突且过时的 mountd
+CONFIG_PACKAGE_mountd=n
+CONFIG_PACKAGE_luci-app-mountd=n
+# 选入 fstrim 工具，结合定时调度优化板载 eMMC 闪存颗粒寿命与垃圾回收
+CONFIG_PACKAGE_fstrim=y
 
 # 补充分区扩容的必备工具
 CONFIG_PACKAGE_resize2fs=y
