@@ -12,6 +12,11 @@ CONFIG_PACKAGE_firewall4=y
 CONFIG_PACKAGE_fullconenat-sonic=y
 CONFIG_PACKAGE_luci-app-fullconenat-sonic=y
 
+# DoH 加密 DNS 代理（待命模式：默认禁用，由用户在后台按需开启）
+CONFIG_PACKAGE_https-dns-proxy=y
+CONFIG_PACKAGE_luci-app-https-dns-proxy=y
+CONFIG_PACKAGE_ca-bundle=y
+
 CONFIG_PACKAGE_kmod-nf-ipt=n
 CONFIG_PACKAGE_iptables=n
 

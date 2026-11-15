@@ -1275,6 +1275,81 @@ if ! grep -q "disabled: 0" "$UPSTREAM_UC_DIR/mac80211.uc"; then
 fi
 echo "PASS: Upstream unquoted shell and double-quoted ucode templates successfully updated."
 
+# =============================================================================
+# 11. DoH 待命模式初始化验证：97-default-https-dns-proxy
+# =============================================================================
+echo "--- Test 11: Verify 97-default-https-dns-proxy Standby DoH Configuration ---"
+HDP_UCI_DEFAULT="$MOCK_BUILD_TREE/package/base-files/files/etc/uci-defaults/97-default-https-dns-proxy"
+
+if [ ! -x "$HDP_UCI_DEFAULT" ]; then
+    echo "FAIL: 97-default-https-dns-proxy is missing or not executable!" >&2
+    exit 1
+fi
+sh -n "$HDP_UCI_DEFAULT" || { echo "FAIL: Syntax error in 97-default-https-dns-proxy!"; exit 1; }
+
+# 11a: 构建期防护断言：返回 1 阻止 rootfs 构建阶段被提前删除
+set +e
+IPKG_INSTROOT="$TMP_DIR/mock_instroot_hdp" sh "$HDP_UCI_DEFAULT" >/dev/null 2>&1
+HDP_INSTROOT_EXIT=$?
+set -e
+if [ "$HDP_INSTROOT_EXIT" -ne 1 ]; then
+    echo "FAIL: 97-default-https-dns-proxy must exit 1 under IPKG_INSTROOT (actual: $HDP_INSTROOT_EXIT)!" >&2
+    exit 1
+fi
+echo "PASS: Build-time protection verified: 97-default-https-dns-proxy remains intact for target first boot."
+
+# 11b: 全新刷机 / 首次启动场景：写入国内安全模板并严格禁用自启
+SIM_HDP_FRESH="$TMP_DIR/sim_hdp_fresh"
+mkdir -p "$SIM_HDP_FRESH/etc/config" "$SIM_HDP_FRESH/etc/init.d" "$SIM_HDP_FRESH/etc/rc.d"
+touch "$SIM_HDP_FRESH/etc/rc.d/S80https-dns-proxy"
+
+cat << 'EOF_MOCK_HDP_INIT' > "$SIM_HDP_FRESH/etc/init.d/https-dns-proxy"
+#!/bin/sh
+case "$1" in
+    disable)
+        rm -f "/etc/rc.d/"*https-dns-proxy
+        ;;
+esac
+EOF_MOCK_HDP_INIT
+chmod +x "$SIM_HDP_FRESH/etc/init.d/https-dns-proxy"
+
+SIM_ROOT="$SIM_HDP_FRESH" sh "$HDP_UCI_DEFAULT"
+
+if [ -f "$SIM_HDP_FRESH/etc/rc.d/S80https-dns-proxy" ]; then
+    echo "FAIL: https-dns-proxy service was not disabled on fresh install!" >&2
+    exit 1
+fi
+if ! grep -q "https://doh.pub/dns-query" "$SIM_HDP_FRESH/etc/config/https-dns-proxy"; then
+    echo "FAIL: DNSPod template was not written to https-dns-proxy config!" >&2
+    exit 1
+fi
+if ! grep -q "https://dns.alidns.com/dns-query" "$SIM_HDP_FRESH/etc/config/https-dns-proxy"; then
+    echo "FAIL: AliDNS template was not written to https-dns-proxy config!" >&2
+    exit 1
+fi
+echo "PASS: Fresh install scenario verified: service disabled and domestic templates injected."
+
+# 11c: 保留配置升级场景：用户既有配置 100% 保持原样不被覆盖
+SIM_HDP_UPGRADE="$TMP_DIR/sim_hdp_upgrade"
+mkdir -p "$SIM_HDP_UPGRADE/etc/config" "$SIM_HDP_UPGRADE/etc/init.d"
+cat << 'EOF_CUSTOM_HDP' > "$SIM_HDP_UPGRADE/etc/config/https-dns-proxy"
+config main 'config'
+config https-dns-proxy 'custom'
+	option resolver_url 'https://my-custom-doh.com/dns-query'
+EOF_CUSTOM_HDP
+
+SIM_ROOT="$SIM_HDP_UPGRADE" sh "$HDP_UCI_DEFAULT"
+
+if ! grep -q "https://my-custom-doh.com/dns-query" "$SIM_HDP_UPGRADE/etc/config/https-dns-proxy"; then
+    echo "FAIL: User custom https-dns-proxy configuration was overwritten during upgrade!" >&2
+    exit 1
+fi
+if grep -q "doh.pub" "$SIM_HDP_UPGRADE/etc/config/https-dns-proxy"; then
+    echo "FAIL: Template incorrectly injected over existing custom configuration!" >&2
+    exit 1
+fi
+echo "PASS: Sysupgrade scenario verified: existing custom configuration 100% preserved."
+
 echo "================================================================================"
 echo "=== All Athena AX6600 WiFi Default Config Tests Passed Successfully! ==="
 echo "================================================================================"

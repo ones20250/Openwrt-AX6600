@@ -280,6 +280,66 @@ EOF_FSTRIM_UCI
 chmod +x "$DEFAULT_FSTRIM_SCRIPT"
 
 # =========================================================
+# DoH 加密 DNS 代理初始化（待命模式）：
+# 1. 严格确保开机默认处于禁用状态，绝不默认接管 dnsmasq 上游
+# 2. 注入 uci-defaults 脚本 (97-default-https-dns-proxy)：全新刷机时预置国内合规 ECS 节点（DNSPod/AliDNS）作为待命模板
+# 3. 严格保护 sysupgrade 保留配置升级场景，已有配置绝不覆盖
+# =========================================================
+DEFAULT_HDP_SCRIPT="$WIFI_DEFAULTS_DIR/97-default-https-dns-proxy"
+cat << 'EOF_HDP_UCI' > "$DEFAULT_HDP_SCRIPT"
+#!/bin/sh
+# 97-default-https-dns-proxy: Athena AX6600 (JDCloud RE-CS-02) Standby DoH Configuration
+
+SYS_PREFIX="${IPKG_INSTROOT:-${SIM_ROOT:-}}"
+
+# 1. 在 rootfs 构建期 (IPKG_INSTROOT)：
+# 退出非 0 状态阻断构建阶段提前删除本脚本，确保随 rootfs 下发并在目标机首次开机时执行。
+if [ -n "$IPKG_INSTROOT" ]; then
+	exit 1
+fi
+
+CFG_FILE="$SYS_PREFIX/etc/config/https-dns-proxy"
+INIT_FILE="$SYS_PREFIX/etc/init.d/https-dns-proxy"
+
+# 2. 严格确保服务开机默认处于禁用状态（待命模式）
+if [ -x "$INIT_FILE" ]; then
+	"$INIT_FILE" disable 2>/dev/null || true
+fi
+rm -f "$SYS_PREFIX/etc/rc.d/"*https-dns-proxy 2>/dev/null || true
+
+# 3. 检查是否为保留配置升级 (sysupgrade) 或用户已存在既有配置：
+# 若检测到 /etc/config/https-dns-proxy 已存在且已有实例配置，严格尊重用户配置，直接退出 0。
+# 退出 0 后由 OpenWrt 官方 uci-defaults 机制将其自动销毁 (rm -f)。
+if [ -s "$CFG_FILE" ] && grep -q "config https-dns-proxy" "$CFG_FILE" 2>/dev/null; then
+	exit 0
+fi
+
+# 4. 仅在全新刷机 / 出厂初始化（无既有可用配置）时，写入国内合规且防死锁的优质 DoH 模板（默认不开启）
+mkdir -p "$SYS_PREFIX/etc/config"
+cat << 'EOF_HDP' > "$CFG_FILE"
+config main 'config'
+	option update_dnsmasq_config '*'
+	list force_dns_ports '53'
+	list force_dns_ports '853'
+
+config https-dns-proxy 'dnspod'
+	option bootstrap_dns '119.29.29.29,223.5.5.5'
+	option resolver_url 'https://doh.pub/dns-query'
+	option listen_addr '127.0.0.1'
+	option listen_port '5053'
+
+config https-dns-proxy 'alidns'
+	option bootstrap_dns '223.5.5.5,119.29.29.29'
+	option resolver_url 'https://dns.alidns.com/dns-query'
+	option listen_addr '127.0.0.1'
+	option listen_port '5054'
+EOF_HDP
+
+exit 0
+EOF_HDP_UCI
+chmod +x "$DEFAULT_HDP_SCRIPT"
+
+# =========================================================
 # 系统升级与资产保护：预置 keep.d 白名单，防止保留配置升级时静默丢失应用级非 UCI 用户资产
 # 覆盖关键资产：/etc/docker/daemon.json, /etc/adguardhome.yaml, /root/.ssh/
 # =========================================================
