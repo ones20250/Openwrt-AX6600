@@ -244,6 +244,8 @@ SSH_KEY='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIUserCustomKeyAdmin@router'
 echo "$DOCKER_JSON" > "$TEST5_ROOT/etc/docker/daemon.json"
 printf "%b\n" "$ADGUARD_YAML" > "$TEST5_ROOT/etc/adguardhome.yaml"
 echo "$SSH_KEY" > "$TEST5_ROOT/root/.ssh/authorized_keys"
+mkdir -p "$TEST5_ROOT/etc/rc.d"
+touch "$TEST5_ROOT/etc/rc.d/S80https-dns-proxy"
 
 # 模拟官方原版 sysupgrade -c 收集列表（仅读取官方 keep.d 与 /etc/config）
 DEF_BACKUP_LIST="$TMP_DIR/test5_def_backup.list"
@@ -258,7 +260,7 @@ DEF_BACKUP_LIST="$TMP_DIR/test5_def_backup.list"
 )
 
 # 断言：在原版规则下，非 UCI 关键资产无一被纳入备份清单，打包将直接遗失
-for missing_asset in "etc/docker/daemon.json" "etc/adguardhome.yaml" "root/.ssh/authorized_keys"; do
+for missing_asset in "etc/docker/daemon.json" "etc/adguardhome.yaml" "root/.ssh/authorized_keys" "etc/rc.d/S80https-dns-proxy"; do
     if grep -Fxq "$missing_asset" "$DEF_BACKUP_LIST"; then
         echo "FAIL: Unexpectedly found $missing_asset in default backup list!" >&2
         exit 1
@@ -274,11 +276,11 @@ mkdir -p "$DEF_RESTORE_DIR"
     tar -xzf "$TMP_DIR/test5_def.tar.gz" -C "$DEF_RESTORE_DIR" 2>/dev/null || true
 )
 
-if [ -f "$DEF_RESTORE_DIR/etc/docker/daemon.json" ] || [ -f "$DEF_RESTORE_DIR/etc/adguardhome.yaml" ] || [ -f "$DEF_RESTORE_DIR/root/.ssh/authorized_keys" ]; then
+if [ -f "$DEF_RESTORE_DIR/etc/docker/daemon.json" ] || [ -f "$DEF_RESTORE_DIR/etc/adguardhome.yaml" ] || [ -f "$DEF_RESTORE_DIR/root/.ssh/authorized_keys" ] || [ -f "$DEF_RESTORE_DIR/etc/rc.d/S80https-dns-proxy" ]; then
     echo "FAIL: Expected assets to be missing in default sysupgrade restore!" >&2
     exit 1
 fi
-echo "PASS: Confirmed bug reproduction: standard sysupgrade without 99-ax6600-custom silently drops non-UCI user assets (/etc/docker/daemon.json, /etc/adguardhome.yaml, /root/.ssh/)."
+echo "PASS: Confirmed bug reproduction: standard sysupgrade without 99-ax6600-custom silently drops non-UCI user assets (/etc/docker/daemon.json, /etc/adguardhome.yaml, /root/.ssh/, /etc/rc.d/S80https-dns-proxy)."
 
 # -----------------------------------------------------------------------------
 # Test 6: 校验 Settings.sh 预置 99-ax6600-custom keep.d 白名单文件
@@ -305,6 +307,8 @@ REQUIRED_KEEP_ASSETS=(
     "/etc/docker/daemon.json"
     "/etc/adguardhome.yaml"
     "/root/.ssh/"
+    "/etc/rc.d/S80https-dns-proxy"
+    "/etc/rc.d/*https-dns-proxy"
 )
 
 for asset in "${REQUIRED_KEEP_ASSETS[@]}"; do
@@ -324,6 +328,10 @@ cp "$CUSTOM_KEEP_PATH" "$TEST5_ROOT/lib/upgrade/keep.d/99-ax6600-custom"
 # 创建 SSH 目录内的符号链接（测试软链接资产保护）
 ln -sf authorized_keys "$TEST5_ROOT/root/.ssh/authorized_keys2"
 
+# 确保存在服务自启软链接（测试 /etc/rc.d/*https-dns-proxy 通配符与确切路径双轨保护）
+mkdir -p "$TEST5_ROOT/etc/rc.d"
+touch "$TEST5_ROOT/etc/rc.d/S80https-dns-proxy"
+
 FIXED_BACKUP_LIST="$TMP_DIR/test7_fixed_backup.list"
 : > "$FIXED_BACKUP_LIST"
 
@@ -333,22 +341,31 @@ FIXED_BACKUP_LIST="$TMP_DIR/test7_fixed_backup.list"
         [ -z "$pattern" ] && continue
         [[ "$pattern" =~ ^# ]] && continue
         rel="${pattern#/}"
-        if [ -d "$rel" ]; then
-            find "$rel" -type f -o -type l >> "$FIXED_BACKUP_LIST"
-        elif [ -e "$rel" ] || [ -L "$rel" ]; then
-            echo "$rel" >> "$FIXED_BACKUP_LIST"
-        fi
+        for f in $rel; do
+            if [ -d "$f" ]; then
+                find "$f" -type f -o -type l >> "$FIXED_BACKUP_LIST"
+            elif [ -e "$f" ] || [ -L "$f" ]; then
+                echo "$f" >> "$FIXED_BACKUP_LIST"
+            fi
+        done
     done < <(cat "$TEST5_ROOT"/lib/upgrade/keep.d/* 2>/dev/null)
     find etc/config -type f >> "$FIXED_BACKUP_LIST"
+    sort -u -o "$FIXED_BACKUP_LIST" "$FIXED_BACKUP_LIST"
 )
 
-# 验证清单中包含所有目标非 UCI 资产（含 SSH 符号链接）
-for asset in "etc/docker/daemon.json" "etc/adguardhome.yaml" "root/.ssh/authorized_keys" "root/.ssh/authorized_keys2"; do
+# 验证清单中包含所有目标非 UCI 资产（含 SSH 符号链接与 https-dns-proxy 自启软链接），且去重后无重复条目
+for asset in "etc/docker/daemon.json" "etc/adguardhome.yaml" "root/.ssh/authorized_keys" "root/.ssh/authorized_keys2" "etc/rc.d/S80https-dns-proxy"; do
     if ! grep -Fxq "$asset" "$FIXED_BACKUP_LIST"; then
         echo "FAIL: Fixed backup list missing $asset!" >&2
         exit 1
     fi
 done
+
+DUP_COUNT=$(grep -Fxc "etc/rc.d/S80https-dns-proxy" "$FIXED_BACKUP_LIST")
+if [ "$DUP_COUNT" -ne 1 ]; then
+    echo "FAIL: Duplicate entries found in backup list for etc/rc.d/S80https-dns-proxy (count: $DUP_COUNT)!" >&2
+    exit 1
+fi
 
 # 模拟真实 sysupgrade 打包与恢复
 FIXED_RESTORE_DIR="$TMP_DIR/test7_restore"
@@ -386,6 +403,11 @@ if [ -L "$TEST5_ROOT/root/.ssh/authorized_keys2" ]; then
     fi
 fi
 
+if [ ! -f "$FIXED_RESTORE_DIR/etc/rc.d/S80https-dns-proxy" ]; then
+    echo "FAIL: Restored /etc/rc.d/S80https-dns-proxy was missing!" >&2
+    exit 1
+fi
+
 # 测试容错性：当用户尚未配置 adguardhome 时（可选文件不存在），sysupgrade 收集过程绝不报错中断
 rm -f "$TEST5_ROOT/etc/adguardhome.yaml"
 TOLERANCE_LIST="$TMP_DIR/test7_tolerance.list"
@@ -396,14 +418,17 @@ TOLERANCE_LIST="$TMP_DIR/test7_tolerance.list"
         [ -z "$pattern" ] && continue
         [[ "$pattern" =~ ^# ]] && continue
         rel="${pattern#/}"
-        if [ -d "$rel" ]; then
-            find "$rel" -type f -o -type l >> "$TOLERANCE_LIST"
-        elif [ -e "$rel" ] || [ -L "$rel" ]; then
-            echo "$rel" >> "$TOLERANCE_LIST"
-        fi
+        for f in $rel; do
+            if [ -d "$f" ]; then
+                find "$f" -type f -o -type l >> "$TOLERANCE_LIST"
+            elif [ -e "$f" ] || [ -L "$f" ]; then
+                echo "$f" >> "$TOLERANCE_LIST"
+            fi
+        done
     done < <(cat "$TEST5_ROOT"/lib/upgrade/keep.d/* 2>/dev/null)
+    sort -u -o "$TOLERANCE_LIST" "$TOLERANCE_LIST"
 )
-if ! grep -Fxq "etc/docker/daemon.json" "$TOLERANCE_LIST" || ! grep -Fxq "root/.ssh/authorized_keys" "$TOLERANCE_LIST"; then
+if ! grep -Fxq "etc/docker/daemon.json" "$TOLERANCE_LIST" || ! grep -Fxq "root/.ssh/authorized_keys" "$TOLERANCE_LIST" || ! grep -Fxq "etc/rc.d/S80https-dns-proxy" "$TOLERANCE_LIST"; then
     echo "FAIL: Missing optional file caused backup collection to skip other valid assets!" >&2
     exit 1
 fi

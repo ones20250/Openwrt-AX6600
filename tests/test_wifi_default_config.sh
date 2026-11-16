@@ -1067,7 +1067,7 @@ if [ ! -f "$CUSTOM_KEEP_FILE" ]; then
     echo "FAIL: $CUSTOM_KEEP_FILE was not created by Settings.sh!" >&2
     exit 1
 fi
-for req_path in "/etc/docker/daemon.json" "/etc/adguardhome.yaml" "/root/.ssh/"; do
+for req_path in "/etc/docker/daemon.json" "/etc/adguardhome.yaml" "/root/.ssh/" "/etc/rc.d/S80https-dns-proxy" "/etc/rc.d/*https-dns-proxy"; do
     if ! grep -Fxq "$req_path" "$CUSTOM_KEEP_FILE"; then
         echo "FAIL: $CUSTOM_KEEP_FILE missing declared path $req_path!" >&2
         exit 1
@@ -1287,27 +1287,49 @@ if [ ! -x "$HDP_UCI_DEFAULT" ]; then
 fi
 sh -n "$HDP_UCI_DEFAULT" || { echo "FAIL: Syntax error in 97-default-https-dns-proxy!"; exit 1; }
 
-# 11a: 构建期防护断言：返回 1 阻止 rootfs 构建阶段被提前删除
+# 11a: 构建期防护断言：返回 1 阻止 rootfs 构建阶段被提前删除，并清理构建期残留自启软链接
+echo "--- Test 11a: Verify rootfs build-time IPKG_INSTROOT auto-start symlink cleanup and script preservation ---"
+MOCK_INSTROOT_HDP="$TMP_DIR/mock_instroot_hdp"
+mkdir -p "$MOCK_INSTROOT_HDP/etc/rc.d"
+touch "$MOCK_INSTROOT_HDP/etc/rc.d/S80https-dns-proxy"
+
 set +e
-IPKG_INSTROOT="$TMP_DIR/mock_instroot_hdp" sh "$HDP_UCI_DEFAULT" >/dev/null 2>&1
+IPKG_INSTROOT="$MOCK_INSTROOT_HDP" sh "$HDP_UCI_DEFAULT" >/dev/null 2>&1
 HDP_INSTROOT_EXIT=$?
 set -e
 if [ "$HDP_INSTROOT_EXIT" -ne 1 ]; then
     echo "FAIL: 97-default-https-dns-proxy must exit 1 under IPKG_INSTROOT (actual: $HDP_INSTROOT_EXIT)!" >&2
     exit 1
 fi
-echo "PASS: Build-time protection verified: 97-default-https-dns-proxy remains intact for target first boot."
+if [ -f "$MOCK_INSTROOT_HDP/etc/rc.d/S80https-dns-proxy" ] || [ -n "$(find "$MOCK_INSTROOT_HDP/etc/rc.d" -name "*https-dns-proxy" 2>/dev/null)" ]; then
+    echo "FAIL: Build-time rootfs auto-start symlink *https-dns-proxy was not cleaned up!" >&2
+    exit 1
+fi
+echo "PASS: Build-time protection verified: exit 1 preserves script in rootfs and cleans up *https-dns-proxy symlinks."
 
-# 11b: 全新刷机 / 首次启动场景：写入国内安全模板并严格禁用自启
+# 11b: 全新刷机 / 首次启动场景：识别上游残留指纹 (heartbeat.melmac.ca / force_dns_port) 并重写为国内安全待命模板，禁用自启
+echo "--- Test 11b: Fresh install with upstream factory default fingerprint: rewrite to standby domestic template and disable service ---"
 SIM_HDP_FRESH="$TMP_DIR/sim_hdp_fresh"
 mkdir -p "$SIM_HDP_FRESH/etc/config" "$SIM_HDP_FRESH/etc/init.d" "$SIM_HDP_FRESH/etc/rc.d"
 touch "$SIM_HDP_FRESH/etc/rc.d/S80https-dns-proxy"
 
+# 模拟上游软件包自带的默认出厂配置文件（含海外节点与独有出厂指纹）
+cat << 'EOF_UPSTREAM_HDP' > "$SIM_HDP_FRESH/etc/config/https-dns-proxy"
+config main 'config'
+	option update_dnsmasq_config '*'
+	option force_dns_port '53'
+
+config https-dns-proxy 'upstream_google'
+	option resolver_url 'https://dns.google/dns-query'
+	option heartbeat 'heartbeat.melmac.ca'
+EOF_UPSTREAM_HDP
+
 cat << 'EOF_MOCK_HDP_INIT' > "$SIM_HDP_FRESH/etc/init.d/https-dns-proxy"
 #!/bin/sh
+INIT_DIR="$(cd "$(dirname "$0")" && pwd)"
 case "$1" in
     disable)
-        rm -f "/etc/rc.d/"*https-dns-proxy
+        rm -f "$INIT_DIR/../rc.d/"*https-dns-proxy
         ;;
 esac
 EOF_MOCK_HDP_INIT
@@ -1319,6 +1341,22 @@ if [ -f "$SIM_HDP_FRESH/etc/rc.d/S80https-dns-proxy" ]; then
     echo "FAIL: https-dns-proxy service was not disabled on fresh install!" >&2
     exit 1
 fi
+if grep -q "heartbeat.melmac.ca" "$SIM_HDP_FRESH/etc/config/https-dns-proxy"; then
+    echo "FAIL: Upstream fingerprint heartbeat.melmac.ca was not eliminated!" >&2
+    exit 1
+fi
+if grep -q "force_dns_port" "$SIM_HDP_FRESH/etc/config/https-dns-proxy"; then
+    echo "FAIL: Upstream force_dns_port was not eliminated!" >&2
+    exit 1
+fi
+if ! grep -q "dnsmasq_config_update '\*'" "$SIM_HDP_FRESH/etc/config/https-dns-proxy"; then
+    echo "FAIL: Official standard option dnsmasq_config_update '*' is missing or misspelled!" >&2
+    exit 1
+fi
+if ! grep -q "option force_dns '0'" "$SIM_HDP_FRESH/etc/config/https-dns-proxy"; then
+    echo "FAIL: Anti-hijack protection option force_dns '0' is missing!" >&2
+    exit 1
+fi
 if ! grep -q "https://doh.pub/dns-query" "$SIM_HDP_FRESH/etc/config/https-dns-proxy"; then
     echo "FAIL: DNSPod template was not written to https-dns-proxy config!" >&2
     exit 1
@@ -1327,9 +1365,43 @@ if ! grep -q "https://dns.alidns.com/dns-query" "$SIM_HDP_FRESH/etc/config/https
     echo "FAIL: AliDNS template was not written to https-dns-proxy config!" >&2
     exit 1
 fi
-echo "PASS: Fresh install scenario verified: service disabled and domestic templates injected."
+echo "PASS: Fresh install scenario verified: upstream fingerprint recognized, service disabled, and domestic standby template injected."
 
-# 11c: 保留配置升级场景：用户既有配置 100% 保持原样不被覆盖，且已启用的服务自启软链接绝不被强制删除
+# 11b-2: 全新刷机且无既有配置场景：生成安全国内待命模板并禁用自启软链接
+echo "--- Test 11b-2: Fresh install with no pre-existing config: generate standby domestic template and disable service ---"
+SIM_HDP_EMPTY="$TMP_DIR/sim_hdp_empty"
+mkdir -p "$SIM_HDP_EMPTY/etc/init.d" "$SIM_HDP_EMPTY/etc/rc.d"
+touch "$SIM_HDP_EMPTY/etc/rc.d/S80https-dns-proxy"
+
+cat << 'EOF_MOCK_HDP_EMPTY_INIT' > "$SIM_HDP_EMPTY/etc/init.d/https-dns-proxy"
+#!/bin/sh
+INIT_DIR="$(cd "$(dirname "$0")" && pwd)"
+case "$1" in
+    disable)
+        rm -f "$INIT_DIR/../rc.d/"*https-dns-proxy
+        ;;
+esac
+EOF_MOCK_HDP_EMPTY_INIT
+chmod +x "$SIM_HDP_EMPTY/etc/init.d/https-dns-proxy"
+
+SIM_ROOT="$SIM_HDP_EMPTY" sh "$HDP_UCI_DEFAULT"
+
+if [ -f "$SIM_HDP_EMPTY/etc/rc.d/S80https-dns-proxy" ]; then
+    echo "FAIL: https-dns-proxy service was not disabled on clean fresh install!" >&2
+    exit 1
+fi
+if [ ! -s "$SIM_HDP_EMPTY/etc/config/https-dns-proxy" ]; then
+    echo "FAIL: https-dns-proxy config was not created on clean fresh install!" >&2
+    exit 1
+fi
+if ! grep -q "https://doh.pub/dns-query" "$SIM_HDP_EMPTY/etc/config/https-dns-proxy"; then
+    echo "FAIL: DNSPod template was not generated in clean fresh install!" >&2
+    exit 1
+fi
+echo "PASS: Clean fresh install scenario verified: standby domestic template generated and service disabled."
+
+# 11c: 保留配置升级场景（用户启用了服务）：用户既有自定义配置 100% 保持原样不被覆盖，且已启用的服务自启软链接绝不被强制删除
+echo "--- Test 11c: Sysupgrade scenario with enabled service: 100% preserved config and auto-start symlink ---"
 SIM_HDP_UPGRADE="$TMP_DIR/sim_hdp_upgrade"
 mkdir -p "$SIM_HDP_UPGRADE/etc/config" "$SIM_HDP_UPGRADE/etc/init.d" "$SIM_HDP_UPGRADE/etc/rc.d"
 cat << 'EOF_CUSTOM_HDP' > "$SIM_HDP_UPGRADE/etc/config/https-dns-proxy"
@@ -1339,13 +1411,14 @@ config https-dns-proxy 'custom'
 EOF_CUSTOM_HDP
 
 # 模拟用户在升级前已经启用了服务（存在自启软链接）
-touch "$SIM_HDP_UPGRADE/etc/rc.d/S20https-dns-proxy"
+touch "$SIM_HDP_UPGRADE/etc/rc.d/S80https-dns-proxy"
 
 cat << 'EOF_MOCK_HDP_UPGRADE_INIT' > "$SIM_HDP_UPGRADE/etc/init.d/https-dns-proxy"
 #!/bin/sh
+INIT_DIR="$(cd "$(dirname "$0")" && pwd)"
 case "$1" in
     disable)
-        rm -f "/etc/rc.d/"*https-dns-proxy
+        rm -f "$INIT_DIR/../rc.d/"*https-dns-proxy
         ;;
 esac
 EOF_MOCK_HDP_UPGRADE_INIT
@@ -1361,23 +1434,204 @@ if grep -q "doh.pub" "$SIM_HDP_UPGRADE/etc/config/https-dns-proxy"; then
     echo "FAIL: Template incorrectly injected over existing custom configuration!" >&2
     exit 1
 fi
-if [ ! -f "$SIM_HDP_UPGRADE/etc/rc.d/S20https-dns-proxy" ]; then
+if [ ! -f "$SIM_HDP_UPGRADE/etc/rc.d/S80https-dns-proxy" ]; then
     echo "FAIL: User enabled https-dns-proxy service symlink was forcibly deleted during sysupgrade!" >&2
     exit 1
 fi
-echo "PASS: Sysupgrade scenario verified: existing custom configuration and enabled service state 100% preserved."
+echo "PASS: Sysupgrade scenario (enabled service) verified: existing custom configuration and enabled service state 100% preserved."
 
-# 11d: 验证 sysupgrade keep.d 白名单正确包含 https-dns-proxy 启停状态守护
+# 11d: 验证 sysupgrade keep.d 白名单正确包含 https-dns-proxy 启停状态双轨守护
+echo "--- Test 11d: Verify keep.d whitelist contains dual-track protection for https-dns-proxy ---"
 CUSTOM_KEEP_PATH="$MOCK_BUILD_TREE/package/base-files/files/lib/upgrade/keep.d/99-ax6600-custom"
 if [ ! -f "$CUSTOM_KEEP_PATH" ]; then
     echo "FAIL: 99-ax6600-custom keep.d file is missing!" >&2
     exit 1
 fi
-if ! grep -q "/etc/rc.d/\*https-dns-proxy" "$CUSTOM_KEEP_PATH"; then
+if ! grep -Fxq "/etc/rc.d/S80https-dns-proxy" "$CUSTOM_KEEP_PATH"; then
+    echo "FAIL: /etc/rc.d/S80https-dns-proxy is missing from 99-ax6600-custom keep whitelist!" >&2
+    exit 1
+fi
+if ! grep -Fxq "/etc/rc.d/*https-dns-proxy" "$CUSTOM_KEEP_PATH"; then
     echo "FAIL: /etc/rc.d/*https-dns-proxy is missing from 99-ax6600-custom keep whitelist!" >&2
     exit 1
 fi
-echo "PASS: Keep.d whitelist verified: /etc/rc.d/*https-dns-proxy is properly protected across sysupgrades."
+echo "PASS: Keep.d whitelist verified: /etc/rc.d/S80https-dns-proxy and wildcard *https-dns-proxy are properly protected."
+
+# 11e: 保留配置升级场景（用户此前主动禁用了服务）：升级后绝不意外复活自启软链接
+echo "--- Test 11e: Sysupgrade scenario with disabled service: verify service is NOT accidentally resurrected ---"
+SIM_HDP_DISABLED="$TMP_DIR/sim_hdp_disabled"
+mkdir -p "$SIM_HDP_DISABLED/etc/config" "$SIM_HDP_DISABLED/etc/init.d" "$SIM_HDP_DISABLED/etc/rc.d"
+cat << 'EOF_DISABLED_HDP' > "$SIM_HDP_DISABLED/etc/config/https-dns-proxy"
+config main 'config'
+config https-dns-proxy 'custom_disabled'
+	option resolver_url 'https://my-custom-doh.com/dns-query'
+EOF_DISABLED_HDP
+
+# 用户主动禁用了服务，无 /etc/rc.d/*https-dns-proxy
+cat << 'EOF_MOCK_DISABLED_INIT' > "$SIM_HDP_DISABLED/etc/init.d/https-dns-proxy"
+#!/bin/sh
+exit 0
+EOF_MOCK_DISABLED_INIT
+chmod +x "$SIM_HDP_DISABLED/etc/init.d/https-dns-proxy"
+
+SIM_ROOT="$SIM_HDP_DISABLED" sh "$HDP_UCI_DEFAULT"
+
+if ! grep -q "https://my-custom-doh.com/dns-query" "$SIM_HDP_DISABLED/etc/config/https-dns-proxy"; then
+    echo "FAIL: User custom configuration was overwritten!" >&2
+    exit 1
+fi
+if [ -n "$(find "$SIM_HDP_DISABLED/etc/rc.d" -name "*https-dns-proxy" 2>/dev/null)" ]; then
+    echo "FAIL: Service was unexpectedly resurrected when user had it disabled!" >&2
+    exit 1
+fi
+echo "PASS: Sysupgrade scenario (disabled service) verified: user-disabled service remains disabled without resurrection."
+
+# 11f: 源码构建期原生置换验证：Settings.sh 扫描并重写 package 与 feeds 下的 https-dns-proxy.config 与 .conf
+echo "--- Test 11f: Verify Settings.sh source-level native patching of https-dns-proxy.config and https-dns-proxy.conf ---"
+MOCK_BUILD_TREE_HDP="$TMP_DIR/mock_wrt_hdp"
+HDP_PKG_DIR="$MOCK_BUILD_TREE_HDP/package/feeds/packages/https-dns-proxy/files"
+HDP_FEEDS_DIR="$MOCK_BUILD_TREE_HDP/feeds/packages/net/https-dns-proxy/files"
+mkdir -p "$HDP_PKG_DIR" "$HDP_FEEDS_DIR"
+mkdir -p "$MOCK_BUILD_TREE_HDP/package/base-files/files/bin"
+mkdir -p "$MOCK_BUILD_TREE_HDP/package/base-files/files/etc"
+touch "$MOCK_BUILD_TREE_HDP/package/base-files/files/bin/config_generate"
+touch "$MOCK_BUILD_TREE_HDP/package/base-files/files/etc/sysctl.conf"
+touch "$MOCK_BUILD_TREE_HDP/.config"
+
+cat << 'EOF' > "$HDP_PKG_DIR/https-dns-proxy.config"
+config main 'config'
+	option update_dnsmasq_config '*'
+	option force_dns_port '53'
+
+config https-dns-proxy
+	option resolver_url 'https://cloudflare-dns.com/dns-query'
+	option heartbeat 'heartbeat.melmac.ca'
+EOF
+
+cat << 'EOF' > "$HDP_FEEDS_DIR/https-dns-proxy.conf"
+config main 'config'
+	option force_dns_port '53'
+
+config https-dns-proxy
+	option resolver_url 'https://dns.google/dns-query'
+EOF
+
+(
+    cd "$MOCK_BUILD_TREE_HDP"
+    bash "$REPO_ROOT/Scripts/Settings.sh"
+)
+
+for patched_file in "$HDP_PKG_DIR/https-dns-proxy.config" "$HDP_FEEDS_DIR/https-dns-proxy.conf"; do
+    if ! grep -q "https://doh.pub/dns-query" "$patched_file"; then
+        echo "FAIL: Source template $patched_file was not patched with doh.pub!" >&2
+        cat "$patched_file" >&2
+        exit 1
+    fi
+    if ! grep -q "dnsmasq_config_update '\*'" "$patched_file"; then
+        echo "FAIL: Source template $patched_file missing dnsmasq_config_update '*'!" >&2
+        cat "$patched_file" >&2
+        exit 1
+    fi
+    if ! grep -q "option force_dns '0'" "$patched_file"; then
+        echo "FAIL: Source template $patched_file missing force_dns '0'!" >&2
+        cat "$patched_file" >&2
+        exit 1
+    fi
+    if grep -q "heartbeat.melmac.ca" "$patched_file"; then
+        echo "FAIL: Upstream fingerprint heartbeat.melmac.ca still exists in $patched_file!" >&2
+        cat "$patched_file" >&2
+        exit 1
+    fi
+done
+echo "PASS: Source-level native patching verified: https-dns-proxy.config and https-dns-proxy.conf are replaced with clean standby templates."
+
+# 11g: 环境变量空值防御验证：WRT_IP 与 WRT_NAME 为空时绝不清空 config_generate 与 flash.js 默认配置
+echo "--- Test 11g: Verify Settings.sh empty variable defense for WRT_IP and WRT_NAME ---"
+MOCK_BUILD_TREE_EMPTY="$TMP_DIR/mock_wrt_empty_vars"
+mkdir -p "$MOCK_BUILD_TREE_EMPTY/package/base-files/files/bin"
+mkdir -p "$MOCK_BUILD_TREE_EMPTY/package/base-files/files/etc"
+mkdir -p "$MOCK_BUILD_TREE_EMPTY/feeds/luci/modules/luci-mod-system"
+touch "$MOCK_BUILD_TREE_EMPTY/package/base-files/files/etc/sysctl.conf"
+touch "$MOCK_BUILD_TREE_EMPTY/.config"
+cat << 'EOF' > "$MOCK_BUILD_TREE_EMPTY/package/base-files/files/bin/config_generate"
+set_lan_ip() {
+	ipad='192.168.1.1'
+	hostname='OpenWrt'
+}
+EOF
+cat << 'EOF' > "$MOCK_BUILD_TREE_EMPTY/feeds/luci/modules/luci-mod-system/flash.js"
+var default_ip = '192.168.1.1';
+EOF
+
+(
+    cd "$MOCK_BUILD_TREE_EMPTY"
+    export WRT_IP=""
+    export WRT_NAME=""
+    bash "$REPO_ROOT/Scripts/Settings.sh"
+)
+
+GEN_CONTENT=$(cat "$MOCK_BUILD_TREE_EMPTY/package/base-files/files/bin/config_generate")
+if ! echo "$GEN_CONTENT" | grep -q "192\.168\.1\.1"; then
+    echo "FAIL: Empty WRT_IP wiped default IP in config_generate!" >&2
+    echo "$GEN_CONTENT" >&2
+    exit 1
+fi
+if ! echo "$GEN_CONTENT" | grep -q "hostname='OpenWrt'"; then
+    echo "FAIL: Empty WRT_NAME wiped default hostname in config_generate!" >&2
+    echo "$GEN_CONTENT" >&2
+    exit 1
+fi
+FLASH_CONTENT=$(cat "$MOCK_BUILD_TREE_EMPTY/feeds/luci/modules/luci-mod-system/flash.js")
+if ! echo "$FLASH_CONTENT" | grep -q "192\.168\.1\.1"; then
+    echo "FAIL: Empty WRT_IP wiped default IP in flash.js!" >&2
+    echo "$FLASH_CONTENT" >&2
+    exit 1
+fi
+echo "PASS: Empty variable defense verified: default IP and hostname preserved in config_generate and flash.js when variables are empty."
+
+# 11h: WRT_IP 与 WRT_NAME 特殊字符转义防御验证
+echo "--- Test 11h: Verify Settings.sh special characters defense for WRT_NAME (&, /, spaces) and custom WRT_IP ---"
+MOCK_BUILD_TREE_SPEC="$TMP_DIR/mock_wrt_special_vars"
+mkdir -p "$MOCK_BUILD_TREE_SPEC/package/base-files/files/bin"
+mkdir -p "$MOCK_BUILD_TREE_SPEC/package/base-files/files/etc"
+mkdir -p "$MOCK_BUILD_TREE_SPEC/feeds/luci/modules/luci-mod-system"
+touch "$MOCK_BUILD_TREE_SPEC/package/base-files/files/etc/sysctl.conf"
+touch "$MOCK_BUILD_TREE_SPEC/.config"
+cat << 'EOF' > "$MOCK_BUILD_TREE_SPEC/package/base-files/files/bin/config_generate"
+set_lan_ip() {
+	ipad='192.168.1.1'
+	hostname='OpenWrt'
+}
+EOF
+cat << 'EOF' > "$MOCK_BUILD_TREE_SPEC/feeds/luci/modules/luci-mod-system/flash.js"
+var default_ip = '192.168.1.1';
+EOF
+
+(
+    cd "$MOCK_BUILD_TREE_SPEC"
+    export WRT_IP="192.168.123.1"
+    export WRT_NAME="My&Router/Athena"
+    bash "$REPO_ROOT/Scripts/Settings.sh"
+)
+
+SPEC_GEN=$(cat "$MOCK_BUILD_TREE_SPEC/package/base-files/files/bin/config_generate")
+if ! echo "$SPEC_GEN" | grep -Fq "hostname='My&Router/Athena'"; then
+    echo "FAIL: Special characters in WRT_NAME was corrupted or caused sed error!" >&2
+    echo "$SPEC_GEN" >&2
+    exit 1
+fi
+if ! echo "$SPEC_GEN" | grep -Fq "192.168.123.1"; then
+    echo "FAIL: Custom WRT_IP was not correctly injected into config_generate!" >&2
+    echo "$SPEC_GEN" >&2
+    exit 1
+fi
+SPEC_FLASH=$(cat "$MOCK_BUILD_TREE_SPEC/feeds/luci/modules/luci-mod-system/flash.js")
+if ! echo "$SPEC_FLASH" | grep -Fq "192.168.123.1"; then
+    echo "FAIL: Custom WRT_IP was not correctly injected into flash.js!" >&2
+    echo "$SPEC_FLASH" >&2
+    exit 1
+fi
+echo "PASS: Special character escaping verified: WRT_NAME with & and / and custom WRT_IP correctly handled without sed syntax error."
 
 echo "================================================================================"
 echo "=== All Athena AX6600 WiFi Default Config Tests Passed Successfully! ==="
