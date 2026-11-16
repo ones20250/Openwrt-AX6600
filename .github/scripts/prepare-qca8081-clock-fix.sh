@@ -22,14 +22,29 @@ if ! grep -Eq '^KERNEL_PATCHVER[[:space:]]*:=[[:space:]]*6\.18[[:space:]]*$' tar
     exit 1
 fi
 
-# Check the whole series first: a conflict must not leave just the clock
-# tables or just the parent selection applied to a changing upstream tree.
-if git apply --check "$FIX" 2>/dev/null; then
+# Check if the complete backport is already present (either via upstream native integration or previously applied patch)
+HAS_PPE_FIX=false
+HAS_CLK_FIX=false
+
+if grep -q 'ppe_port_clk_parents' "$DRIVER" 2>/dev/null; then
+    HAS_PPE_FIX=true
+fi
+
+if grep -rq 'C(P_UNIPHY1_RX, 1, 0, 0)' target/linux/qualcommax/patches-6.18/ 2>/dev/null; then
+    HAS_CLK_FIX=true
+fi
+
+if [[ "$HAS_PPE_FIX" == "true" && "$HAS_CLK_FIX" == "true" ]]; then
+    echo 'QCA8081 clock fix: complete backport already present.'
+    exit 0
+elif [[ "$HAS_PPE_FIX" == "true" || "$HAS_CLK_FIX" == "true" ]]; then
+    echo 'QCA8081 clock fix: source drift or partial backport; refusing an unverified build.' >&2
+    exit 1
+elif git apply --check "$FIX" 2>/dev/null; then
     # Preserve whitespace in the embedded GCC patch context verbatim.
     git apply --whitespace=nowarn "$FIX"
     echo 'QCA8081 clock fix: applied PPE parent selection and GCC frequency tables.'
-elif git apply --reverse --check "$FIX" 2>/dev/null; then
-    echo 'QCA8081 clock fix: complete backport already present.'
+    exit 0
 else
     echo 'QCA8081 clock fix: source drift or partial backport; refusing an unverified build.' >&2
     git apply --check "$FIX" >&2

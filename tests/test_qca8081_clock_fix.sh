@@ -61,6 +61,33 @@ snapshot > "$TMP/twice"
 cmp "$TMP/once" "$TMP/twice"
 echo 'PASS: complete fix applies cleanly and repeated application is idempotent'
 
+# 1b. 上游官方原生合入校验（模拟上游使用 0084 补丁编号与原生 PPE 驱动修复）
+fresh_tree upstream_native
+# 模拟上游合并后的驱动文件（已包含 ppe_port_clk_parents）
+cp "$TMP/clean/$DRIVER" "$TREE/$DRIVER"
+# 模拟上游合并后的时钟补丁（上游官方编号为 0084）
+mkdir -p "$TREE/target/linux/qualcommax/patches-6.18"
+cat << 'EOF_UPSTREAM_0084' > "$TREE/target/linux/qualcommax/patches-6.18/0084-clk-qcom-gcc-ipq6018-add-port5-sgmii-rates.patch"
+--- a/drivers/clk/qcom/gcc-ipq6018.c
++++ b/drivers/clk/qcom/gcc-ipq6018.c
+@@ -513,11 +513,13 @@
+ static const struct freq_conf ftbl_nss_port5_rx_clk_src_125[] = {
+ 	C(P_UNIPHY1_RX, 2.5, 0, 0),
++	C(P_UNIPHY1_RX, 1, 0, 0),
+ 	C(P_UNIPHY0_RX, 1, 0, 0),
+ };
+EOF_UPSTREAM_0084
+snapshot > "$TMP/upstream-before"
+OUTPUT=$(run_helper)
+snapshot > "$TMP/upstream-after"
+cmp "$TMP/upstream-before" "$TMP/upstream-after"
+if ! echo "$OUTPUT" | grep -q 'complete backport already present'; then
+    echo "FAIL: upstream native integration was not recognized!" >&2
+    echo "$OUTPUT" >&2
+    exit 1
+fi
+echo 'PASS: upstream native fix with official 0084 patch recognized and safely accepted'
+
 # 2. 源码上下文漂移时的原子性防护（不可部分打入）
 fresh_tree drift
 sed -i 's/ppe_scheduler_init(priv);/ppe_scheduler_init_changed(priv);/' "$TREE/$DRIVER"
