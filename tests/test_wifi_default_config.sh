@@ -1329,14 +1329,27 @@ if ! grep -q "https://dns.alidns.com/dns-query" "$SIM_HDP_FRESH/etc/config/https
 fi
 echo "PASS: Fresh install scenario verified: service disabled and domestic templates injected."
 
-# 11c: 保留配置升级场景：用户既有配置 100% 保持原样不被覆盖
+# 11c: 保留配置升级场景：用户既有配置 100% 保持原样不被覆盖，且已启用的服务自启软链接绝不被强制删除
 SIM_HDP_UPGRADE="$TMP_DIR/sim_hdp_upgrade"
-mkdir -p "$SIM_HDP_UPGRADE/etc/config" "$SIM_HDP_UPGRADE/etc/init.d"
+mkdir -p "$SIM_HDP_UPGRADE/etc/config" "$SIM_HDP_UPGRADE/etc/init.d" "$SIM_HDP_UPGRADE/etc/rc.d"
 cat << 'EOF_CUSTOM_HDP' > "$SIM_HDP_UPGRADE/etc/config/https-dns-proxy"
 config main 'config'
 config https-dns-proxy 'custom'
 	option resolver_url 'https://my-custom-doh.com/dns-query'
 EOF_CUSTOM_HDP
+
+# 模拟用户在升级前已经启用了服务（存在自启软链接）
+touch "$SIM_HDP_UPGRADE/etc/rc.d/S20https-dns-proxy"
+
+cat << 'EOF_MOCK_HDP_UPGRADE_INIT' > "$SIM_HDP_UPGRADE/etc/init.d/https-dns-proxy"
+#!/bin/sh
+case "$1" in
+    disable)
+        rm -f "/etc/rc.d/"*https-dns-proxy
+        ;;
+esac
+EOF_MOCK_HDP_UPGRADE_INIT
+chmod +x "$SIM_HDP_UPGRADE/etc/init.d/https-dns-proxy"
 
 SIM_ROOT="$SIM_HDP_UPGRADE" sh "$HDP_UCI_DEFAULT"
 
@@ -1348,7 +1361,23 @@ if grep -q "doh.pub" "$SIM_HDP_UPGRADE/etc/config/https-dns-proxy"; then
     echo "FAIL: Template incorrectly injected over existing custom configuration!" >&2
     exit 1
 fi
-echo "PASS: Sysupgrade scenario verified: existing custom configuration 100% preserved."
+if [ ! -f "$SIM_HDP_UPGRADE/etc/rc.d/S20https-dns-proxy" ]; then
+    echo "FAIL: User enabled https-dns-proxy service symlink was forcibly deleted during sysupgrade!" >&2
+    exit 1
+fi
+echo "PASS: Sysupgrade scenario verified: existing custom configuration and enabled service state 100% preserved."
+
+# 11d: 验证 sysupgrade keep.d 白名单正确包含 https-dns-proxy 启停状态守护
+CUSTOM_KEEP_PATH="$MOCK_BUILD_TREE/package/base-files/files/lib/upgrade/keep.d/99-ax6600-custom"
+if [ ! -f "$CUSTOM_KEEP_PATH" ]; then
+    echo "FAIL: 99-ax6600-custom keep.d file is missing!" >&2
+    exit 1
+fi
+if ! grep -q "/etc/rc.d/\*https-dns-proxy" "$CUSTOM_KEEP_PATH"; then
+    echo "FAIL: /etc/rc.d/*https-dns-proxy is missing from 99-ax6600-custom keep whitelist!" >&2
+    exit 1
+fi
+echo "PASS: Keep.d whitelist verified: /etc/rc.d/*https-dns-proxy is properly protected across sysupgrades."
 
 echo "================================================================================"
 echo "=== All Athena AX6600 WiFi Default Config Tests Passed Successfully! ==="

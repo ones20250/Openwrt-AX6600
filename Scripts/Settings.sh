@@ -281,9 +281,9 @@ chmod +x "$DEFAULT_FSTRIM_SCRIPT"
 
 # =========================================================
 # DoH 加密 DNS 代理初始化（待命模式）：
-# 1. 严格确保开机默认处于禁用状态，绝不默认接管 dnsmasq 上游
+# 1. 严格保护 sysupgrade 保留配置升级场景：已有配置和服务启用状态 100% 保持，绝不强制禁用
 # 2. 注入 uci-defaults 脚本 (97-default-https-dns-proxy)：全新刷机时预置国内合规 ECS 节点（DNSPod/AliDNS）作为待命模板
-# 3. 严格保护 sysupgrade 保留配置升级场景，已有配置绝不覆盖
+# 3. 仅在全新刷机时开机默认处于禁用状态，绝不默认接管 dnsmasq 上游与劫持 53 端口
 # =========================================================
 DEFAULT_HDP_SCRIPT="$WIFI_DEFAULTS_DIR/97-default-https-dns-proxy"
 cat << 'EOF_HDP_UCI' > "$DEFAULT_HDP_SCRIPT"
@@ -301,26 +301,26 @@ fi
 CFG_FILE="$SYS_PREFIX/etc/config/https-dns-proxy"
 INIT_FILE="$SYS_PREFIX/etc/init.d/https-dns-proxy"
 
-# 2. 严格确保服务开机默认处于禁用状态（待命模式）
+# 2. 检查是否为保留配置升级 (sysupgrade) 或用户已存在既有配置：
+# 若检测到 /etc/config/https-dns-proxy 已存在且已有实例配置，严格尊重用户既有配置与当前启停状态：
+# 绝对不执行 disable，绝对不删除 /etc/rc.d/*https-dns-proxy 自启软链接，直接静默退出 0。
+# 退出 0 后由 OpenWrt 官方 uci-defaults 机制将其自动销毁 (rm -f)，后续绝不重复运行。
+if [ -s "$CFG_FILE" ] && grep -q "config https-dns-proxy" "$CFG_FILE" 2>/dev/null; then
+	exit 0
+fi
+
+# 3. 仅在全新刷机 / 出厂初始化（无既有可用配置）时，执行待命模式初始化：
+# a. 确保服务开机默认处于禁用状态（待命模式），绝不默认接管 dnsmasq 上游
 if [ -x "$INIT_FILE" ]; then
 	"$INIT_FILE" disable 2>/dev/null || true
 fi
 rm -f "$SYS_PREFIX/etc/rc.d/"*https-dns-proxy 2>/dev/null || true
 
-# 3. 检查是否为保留配置升级 (sysupgrade) 或用户已存在既有配置：
-# 若检测到 /etc/config/https-dns-proxy 已存在且已有实例配置，严格尊重用户配置，直接退出 0。
-# 退出 0 后由 OpenWrt 官方 uci-defaults 机制将其自动销毁 (rm -f)。
-if [ -s "$CFG_FILE" ] && grep -q "config https-dns-proxy" "$CFG_FILE" 2>/dev/null; then
-	exit 0
-fi
-
-# 4. 仅在全新刷机 / 出厂初始化（无既有可用配置）时，写入国内合规且防死锁的优质 DoH 模板（默认不开启）
+# b. 写入国内合规且防端口劫持死锁的优质 DoH 模板（默认不开启）
 mkdir -p "$SYS_PREFIX/etc/config"
 cat << 'EOF_HDP' > "$CFG_FILE"
 config main 'config'
 	option update_dnsmasq_config '*'
-	list force_dns_ports '53'
-	list force_dns_ports '853'
 
 config https-dns-proxy 'dnspod'
 	option bootstrap_dns '119.29.29.29,223.5.5.5'
@@ -341,7 +341,7 @@ chmod +x "$DEFAULT_HDP_SCRIPT"
 
 # =========================================================
 # 系统升级与资产保护：预置 keep.d 白名单，防止保留配置升级时静默丢失应用级非 UCI 用户资产
-# 覆盖关键资产：/etc/docker/daemon.json, /etc/adguardhome.yaml, /root/.ssh/
+# 覆盖关键资产：/etc/docker/daemon.json, /etc/adguardhome.yaml, /root/.ssh/, /etc/rc.d/*https-dns-proxy
 # =========================================================
 KEEP_DIR="./package/base-files/files/lib/upgrade/keep.d"
 mkdir -p "$KEEP_DIR"
@@ -351,6 +351,7 @@ cat << 'EOF_KEEP' > "$CUSTOM_KEEP_FILE"
 /etc/docker/daemon.json
 /etc/adguardhome.yaml
 /root/.ssh/
+/etc/rc.d/*https-dns-proxy
 EOF_KEEP
 chmod 644 "$CUSTOM_KEEP_FILE"
 
