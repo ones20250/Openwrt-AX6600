@@ -140,11 +140,6 @@ jobs:
             echo "src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages" >> feeds.conf.default
           fi
 
-      - name: Fix QCA8081 Port Clocks
-        run: |
-          cd ./wrt/
-          bash "$GITHUB_WORKSPACE/.github/scripts/prepare-qca8081-clock-fix.sh"
-
       - name: Check Scripts
         run: |
           find ./ -maxdepth 3 -type f -iregex ".*\(txt\|sh\)$" -exec dos2unix {} \; -exec chmod +x {} \;
@@ -314,9 +309,9 @@ jobs:
             done
           fi
 
-          # 6. Qualcomm PPE 时钟驱动补丁生效断言
+          # 6. Qualcomm PPE 时钟驱动原生完备性断言
           PPE_DRIVER="target/linux/qualcommax/files/drivers/net/ethernet/qualcomm/qca_ppe_main.c"
-          IPQ6018_PATCH="target/linux/qualcommax/patches-6.18/0918-clk-qcom-gcc-ipq6018-keep-port-5-on-uniphy1-at-SGMII-rates.patch"
+          UPSTREAM_0084_PATCH="target/linux/qualcommax/patches-6.18/0084-clk-qcom-gcc-ipq6018-add-port5-sgmii-rates.patch"
           IPQ8074_CONFLICT="target/linux/qualcommax/patches-6.18/0919-clk-qcom-gcc-ipq8074-keep-port-5-on-uniphy1-at-SGMII-rates.patch"
           if [ -d "target" ]; then
             if [ ! -f "$PPE_DRIVER" ]; then
@@ -325,8 +320,8 @@ jobs:
             elif ! grep -q "ppe_port_clk_parents" "$PPE_DRIVER"; then
               echo "::error::断言失败: Qualcomm PPE 驱动未成功植入 QCA8081 时钟修复逻辑！"
               FAIL=1
-            elif [ ! -s "$IPQ6018_PATCH" ]; then
-              echo "::error::断言失败: IPQ6018 GCC 时钟补丁缺失或为空 ($IPQ6018_PATCH)！"
+            elif ! grep -q 'C(P_UNIPHY1_RX, 1, 0, 0)' "$UPSTREAM_0084_PATCH" 2>/dev/null && ! grep -rq 'C(P_UNIPHY1_RX, 1, 0, 0)' target/linux/qualcommax/patches-6.18/ 2>/dev/null; then
+              echo "::error::断言失败: IPQ6018 GCC 时钟补丁缺失或为空 ($UPSTREAM_0084_PATCH)！"
               FAIL=1
             elif [ -e "$IPQ8074_CONFLICT" ]; then
               echo "::error::断言失败: 检测到已废弃的 IPQ8074 冲突补丁残留 ($IPQ8074_CONFLICT)！"

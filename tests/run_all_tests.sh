@@ -38,7 +38,7 @@ fi
 TEST_SUITES=(
     "test_config_assertion.sh:CI 配置断言与意图感知回归测试 (PLUS 插件 & PPE 驱动 & firewall4 & 目标机型)"
     "test_wifi_default_config.sh:WiFi 默认配置注入与三频合规初始化回归测试"
-    "test_qca8081_clock_fix.sh:Qualcomm PPE QCA8081 时钟补丁集成回归测试"
+    "test_qca8081_clock_fix.sh:Qualcomm PPE QCA8081 原生时钟断言门禁回归测试"
     "test_wolultra_configuration.sh:wolultra 网络唤醒插件配置与 CI 断言回归测试"
     "test_ci_defconfig_exit.sh:CI 构建流程 defconfig 退出码阻断回归测试"
     "test_upgrade_and_backup_consistency.sh:保留配置升级与 Docker 备份恢复规范一致性测试"

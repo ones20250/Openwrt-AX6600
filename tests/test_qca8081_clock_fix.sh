@@ -1,180 +1,356 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
-# Regression Test: Verify QCA8081 Clock Fix patch integration and workflow safety.
-# Supports standalone execution with built-in fixture as well as external source validation.
+# Regression Test: Verify QCA8081 Native Clock Fix Assertion Gates & Workflow Cleanliness
+# Ensures upstream native PPE driver logic and IPQ6018 clock patches are strictly enforced
+# while guaranteeing that obsolete out-of-tree patches and helper scripts remain retired.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-HELPER="$REPO_ROOT/.github/scripts/prepare-qca8081-clock-fix.sh"
 WORKFLOW_FILE="$REPO_ROOT/.github/workflows/WRT-CORE.yml"
 
-DRIVER="target/linux/qualcommax/files/drivers/net/ethernet/qualcomm/qca_ppe_main.c"
-TARGET="target/linux/qualcommax/Makefile"
-
-SOURCE="${1:-}"
-FIXTURE="$REPO_ROOT/tests/fixtures/qca_ppe_main_clean.c"
-
-if [ -n "$SOURCE" ]; then
-    SOURCE=$(cd "$SOURCE" && pwd)
-    echo "=== Running QCA8081 Clock Fix Regression Test (against provided source: $SOURCE) ==="
-    test -f "$SOURCE/$DRIVER"
-    test -f "$SOURCE/$TARGET"
-else
-    echo "=== Running QCA8081 Clock Fix Regression Test (Standalone Fixture Mode) ==="
-    if [ ! -f "$FIXTURE" ]; then
-        echo "FAIL: Test fixture not found at $FIXTURE" >&2
-        exit 1
+BASH_BIN="${BASH:-}"
+if [ -z "$BASH_BIN" ] || ! "$BASH_BIN" -c "true" 2>/dev/null; then
+    if command -v bash >/dev/null 2>&1 && bash -c "true" 2>/dev/null; then
+        BASH_BIN="bash"
+    elif [ -x "/bin/bash" ]; then
+        BASH_BIN="/bin/bash"
+    elif [ -x "/usr/bin/bash" ]; then
+        BASH_BIN="/usr/bin/bash"
+    elif [ -x "C:/Program Files/Git/bin/bash.exe" ]; then
+        BASH_BIN="C:/Program Files/Git/bin/bash.exe"
+    else
+        BASH_BIN="sh"
     fi
 fi
 
-TMP="$(mktemp -d 2>/dev/null || mktemp -d -t 'qca_test')"
-trap 'rm -rf "$TMP"' EXIT
+echo "=== Running QCA8081 Native Clock Fix Assertion & Regression Tests ==="
 
-fresh_tree() {
-    TREE="$TMP/$1"
-    mkdir -p "$TREE/$(dirname "$DRIVER")"
-    mkdir -p "$TREE/$(dirname "$TARGET")"
-    if [ -n "$SOURCE" ]; then
-        cp "$SOURCE/$DRIVER" "$TREE/$DRIVER"
-        cp "$SOURCE/$TARGET" "$TREE/$TARGET"
-    else
-        cp "$FIXTURE" "$TREE/$DRIVER"
-        printf "KERNEL_PATCHVER:=6.18\n" > "$TREE/$TARGET"
-    fi
-    git -C "$TREE" init -q
+if [ ! -f "$WORKFLOW_FILE" ]; then
+    echo "ERROR: Workflow file not found at $WORKFLOW_FILE" >&2
+    exit 1
+fi
+
+TMP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t 'qca_assert_test')"
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+# -----------------------------------------------------------------------------
+# 提取 WRT-CORE.yml 中的第 6 项 Qualcomm PPE QCA8081 时钟驱动原生完备性断言块
+# -----------------------------------------------------------------------------
+ASSERT_SNIPPET="$(awk '/# 6\. Qualcomm PPE 时钟驱动.*断言/{flag=1; next} flag && /rm -f \.config\.seed/{flag=0} flag' "$WORKFLOW_FILE")"
+if [ -z "$ASSERT_SNIPPET" ]; then
+    echo "FAIL: Failed to extract QCA8081 assertion block from $WORKFLOW_FILE!" >&2
+    exit 1
+fi
+
+TEST_SCRIPT="$TMP_DIR/run_qca_assert.sh"
+cat << 'EOF' > "$TEST_SCRIPT"
+#!/usr/bin/env bash
+set -e
+FAIL=0
+TARGET_ROOT="$1"
+cd "$TARGET_ROOT"
+EOF
+
+echo "$ASSERT_SNIPPET" >> "$TEST_SCRIPT"
+
+cat << 'EOF' >> "$TEST_SCRIPT"
+if [[ $FAIL -ne 0 ]]; then
+    exit 1
+fi
+exit 0
+EOF
+chmod +x "$TEST_SCRIPT"
+
+# -----------------------------------------------------------------------------
+# 辅助函数：初始化测试用的源码树结构
+# -----------------------------------------------------------------------------
+PPE_REL_DIR="target/linux/qualcommax/files/drivers/net/ethernet/qualcomm"
+PATCH_REL_DIR="target/linux/qualcommax/patches-6.18"
+
+setup_tree() {
+    local TREE="$1"
+    rm -rf "$TREE"
+    mkdir -p "$TREE/$PPE_REL_DIR"
+    mkdir -p "$TREE/$PATCH_REL_DIR"
 }
 
-run_helper() { (cd "$TREE" && bash "$HELPER"); }
-snapshot() { (cd "$TREE" && find target -type f -print0 | sort -z | xargs -0 sha256sum); }
-
-# 1. 干净源码首次应用与幂等性校验
-fresh_tree clean
-run_helper
-grep -q 'ret = clk_set_parent(rcg, parent);' "$TREE/$DRIVER"
-grep -q 'ret = ppe_port_clk_parents(priv);' "$TREE/$DRIVER"
-test -s "$TREE/target/linux/qualcommax/patches-6.18/0918-clk-qcom-gcc-ipq6018-keep-port-5-on-uniphy1-at-SGMII-rates.patch"
-snapshot > "$TMP/once"
-run_helper
-snapshot > "$TMP/twice"
-cmp "$TMP/once" "$TMP/twice"
-echo 'PASS: complete fix applies cleanly and repeated application is idempotent'
-
-# 1b. 上游官方原生合入校验（模拟上游使用 0084 补丁编号与原生 PPE 驱动修复）
-fresh_tree upstream_native
-# 模拟上游合并后的驱动文件（已包含 ppe_port_clk_parents）
-cp "$TMP/clean/$DRIVER" "$TREE/$DRIVER"
-# 模拟上游合并后的时钟补丁（上游官方编号为 0084）
-mkdir -p "$TREE/target/linux/qualcommax/patches-6.18"
-cat << 'EOF_UPSTREAM_0084' > "$TREE/target/linux/qualcommax/patches-6.18/0084-clk-qcom-gcc-ipq6018-add-port5-sgmii-rates.patch"
+# -----------------------------------------------------------------------------
+# Test 1: 上游正常集成通过 (Upstream Native Integration Passed)
+# -----------------------------------------------------------------------------
+echo "--- Test 1a: Upstream native integration with official 0084 patch succeeds ---"
+TREE_1A="$TMP_DIR/tree_1a"
+setup_tree "$TREE_1A"
+cat << 'EOF' > "$TREE_1A/$PPE_REL_DIR/qca_ppe_main.c"
+static int ppe_port_clk_parents(struct qca_ppe_priv *priv) {
+    /* Upstream native QCA8081 clock parent binding */
+    return 0;
+}
+EOF
+cat << 'EOF' > "$TREE_1A/$PATCH_REL_DIR/0084-clk-qcom-gcc-ipq6018-add-port5-sgmii-rates.patch"
 --- a/drivers/clk/qcom/gcc-ipq6018.c
 +++ b/drivers/clk/qcom/gcc-ipq6018.c
-@@ -513,11 +513,13 @@
- static const struct freq_conf ftbl_nss_port5_rx_clk_src_125[] = {
+@@ -513,6 +513,7 @@
  	C(P_UNIPHY1_RX, 2.5, 0, 0),
 +	C(P_UNIPHY1_RX, 1, 0, 0),
  	C(P_UNIPHY0_RX, 1, 0, 0),
- };
-EOF_UPSTREAM_0084
-snapshot > "$TMP/upstream-before"
-OUTPUT=$(run_helper)
-snapshot > "$TMP/upstream-after"
-cmp "$TMP/upstream-before" "$TMP/upstream-after"
-if ! echo "$OUTPUT" | grep -q 'complete backport already present'; then
-    echo "FAIL: upstream native integration was not recognized!" >&2
-    echo "$OUTPUT" >&2
+EOF
+
+set +e
+"$BASH_BIN" "$TEST_SCRIPT" "$TREE_1A" > "$TMP_DIR/test1a.log" 2>&1
+EXIT_1A=$?
+set -e
+if [ "$EXIT_1A" -ne 0 ]; then
+    echo "FAIL: Expected exit 0 for upstream native 0084 integration, got $EXIT_1A" >&2
+    cat "$TMP_DIR/test1a.log" >&2
     exit 1
 fi
-echo 'PASS: upstream native fix with official 0084 patch recognized and safely accepted'
-
-# 2. 源码上下文漂移时的原子性防护（不可部分打入）
-fresh_tree drift
-sed -i 's/ppe_scheduler_init(priv);/ppe_scheduler_init_changed(priv);/' "$TREE/$DRIVER"
-snapshot > "$TMP/drift-before"
-if run_helper > "$TMP/drift.log" 2>&1; then
-    echo 'FAIL: incompatible source was accepted' >&2; exit 1
+if ! grep -q "Qualcomm PPE QCA8081 时钟修复逻辑与分频补丁校验通过" "$TMP_DIR/test1a.log"; then
+    echo "FAIL: Missing success verification message: $(cat "$TMP_DIR/test1a.log")" >&2
+    exit 1
 fi
-snapshot > "$TMP/drift-after"
-cmp "$TMP/drift-before" "$TMP/drift-after"
-echo 'PASS: source drift fails safely without leaving partially applied patches'
+echo "PASS: Upstream native fix with official 0084 patch recognized and passed cleanly."
 
-# 3. 补丁部分已存在时的识别校验
-fresh_tree partial
-mkdir -p "$TREE/target/linux/qualcommax/patches-6.18"
-cp "$TMP/clean/target/linux/qualcommax/patches-6.18/0918-clk-qcom-gcc-ipq6018-keep-port-5-on-uniphy1-at-SGMII-rates.patch" "$TREE/target/linux/qualcommax/patches-6.18/"
-snapshot > "$TMP/partial-before"
-if run_helper > "$TMP/partial.log" 2>&1; then
-    echo 'FAIL: incomplete existing fix was accepted' >&2; exit 1
+echo "--- Test 1b: Upstream native integration with generic patch name matching C(P_UNIPHY1_RX, 1, 0, 0) ---"
+TREE_1B="$TMP_DIR/tree_1b"
+setup_tree "$TREE_1B"
+cp "$TREE_1A/$PPE_REL_DIR/qca_ppe_main.c" "$TREE_1B/$PPE_REL_DIR/qca_ppe_main.c"
+cat << 'EOF' > "$TREE_1B/$PATCH_REL_DIR/custom-clk-gcc.patch"
++	C(P_UNIPHY1_RX, 1, 0, 0),
+EOF
+
+set +e
+"$BASH_BIN" "$TEST_SCRIPT" "$TREE_1B" > "$TMP_DIR/test1b.log" 2>&1
+EXIT_1B=$?
+set -e
+if [ "$EXIT_1B" -ne 0 ]; then
+    echo "FAIL: Expected exit 0 for generic patch frequency table match, got $EXIT_1B" >&2
+    cat "$TMP_DIR/test1b.log" >&2
+    exit 1
 fi
-snapshot > "$TMP/partial-after"
-cmp "$TMP/partial-before" "$TMP/partial-after"
-echo 'PASS: incomplete existing fix fails without modifying source'
+echo "PASS: Generic patch containing C(P_UNIPHY1_RX, 1, 0, 0) correctly recognized and passed."
 
-# 4. 非目标内核版本（如 6.12）时的拦截校验
-fresh_tree kernel
-sed -i 's/KERNEL_PATCHVER:=6.18/KERNEL_PATCHVER:=6.12/' "$TREE/$TARGET"
-snapshot > "$TMP/kernel-before"
-if run_helper > "$TMP/kernel.log" 2>&1; then
-    echo 'FAIL: unsupported PPE kernel was accepted' >&2; exit 1
+echo "--- Test 1c: Backward-compatible support for legacy 0918 patch filename with clock fix ---"
+TREE_1C="$TMP_DIR/tree_1c"
+setup_tree "$TREE_1C"
+cp "$TREE_1A/$PPE_REL_DIR/qca_ppe_main.c" "$TREE_1C/$PPE_REL_DIR/qca_ppe_main.c"
+cat << 'EOF' > "$TREE_1C/$PATCH_REL_DIR/0918-clk-qcom-gcc-ipq6018-keep-port-5-on-uniphy1-at-SGMII-rates.patch"
+--- a/drivers/clk/qcom/gcc-ipq6018.c
++++ b/drivers/clk/qcom/gcc-ipq6018.c
+@@ -513,6 +513,7 @@
+ 	C(P_UNIPHY1_RX, 2.5, 0, 0),
++	C(P_UNIPHY1_RX, 1, 0, 0),
+ 	C(P_UNIPHY0_RX, 1, 0, 0),
+EOF
+
+set +e
+"$BASH_BIN" "$TEST_SCRIPT" "$TREE_1C" > "$TMP_DIR/test1c.log" 2>&1
+EXIT_1C=$?
+set -e
+if [ "$EXIT_1C" -ne 0 ]; then
+    echo "FAIL: Expected exit 0 for backward-compatible 0918 patch, got $EXIT_1C" >&2
+    cat "$TMP_DIR/test1c.log" >&2
+    exit 1
 fi
-snapshot > "$TMP/kernel-after"
-cmp "$TMP/kernel-before" "$TMP/kernel-after"
-echo 'PASS: unsupported kernel fails without modification'
+echo "PASS: Legacy 0918 patch filename backward compatibility verified."
 
-# 5. 非 PPE 树的无害跳过校验（非 CI 环境）
-TREE="$TMP/non-ppe"
-mkdir -p "$TREE"
-CI=false GITHUB_ACTIONS=false run_helper
-test -z "$(find "$TREE" -type f -print -quit)"
-echo 'PASS: non-PPE source is safely skipped in non-CI environments'
+# -----------------------------------------------------------------------------
+# Test 2: 驱动缺失或时钟修复逻辑缺失拦截 (Driver Missing / Unpatched Blocked)
+# -----------------------------------------------------------------------------
+echo "--- Test 2a: Target tree missing Qualcomm PPE driver strictly blocked ---"
+TREE_2A="$TMP_DIR/tree_2a"
+setup_tree "$TREE_2A"
+# 不创建 qca_ppe_main.c
+cp "$TREE_1A/$PATCH_REL_DIR/0084-clk-qcom-gcc-ipq6018-add-port5-sgmii-rates.patch" "$TREE_2A/$PATCH_REL_DIR/"
 
-# 6. CI 环境下非 PPE 树的强制报错阻断校验（防静默失效）
-TREE="$TMP/ci-missing-ppe"
-mkdir -p "$TREE"
-if CI=true GITHUB_ACTIONS=true run_helper > "$TMP/ci-fail.log" 2>&1; then
-    echo 'FAIL: missing PPE driver in CI environment should have failed!' >&2; exit 1
+set +e
+"$BASH_BIN" "$TEST_SCRIPT" "$TREE_2A" > "$TMP_DIR/test2a.log" 2>&1
+EXIT_2A=$?
+set -e
+if [ "$EXIT_2A" -ne 1 ]; then
+    echo "FAIL: Expected exit 1 for missing PPE driver, got $EXIT_2A" >&2
+    cat "$TMP_DIR/test2a.log" >&2
+    exit 1
 fi
-echo 'PASS: missing PPE driver in CI environment is strictly blocked (no silent skip)'
+if ! grep -q "Qualcomm PPE 驱动文件缺失" "$TMP_DIR/test2a.log"; then
+    echo "FAIL: Error message did not report missing PPE driver: $(cat "$TMP_DIR/test2a.log")" >&2
+    exit 1
+fi
+echo "PASS: Missing Qualcomm PPE driver strictly blocked (exit code 1)."
 
-# 7. 工作流步骤时序验证（纯原生 Bash，跨平台免 Python 依赖与编码冲突）
-if [ ! -f "$WORKFLOW_FILE" ]; then
-    echo "FAIL: $WORKFLOW_FILE not found" >&2
+echo "--- Test 2b: PPE driver missing ppe_port_clk_parents logic strictly blocked ---"
+TREE_2B="$TMP_DIR/tree_2b"
+setup_tree "$TREE_2B"
+echo "void qca_ppe_unpatched(void) {}" > "$TREE_2B/$PPE_REL_DIR/qca_ppe_main.c"
+cp "$TREE_1A/$PATCH_REL_DIR/0084-clk-qcom-gcc-ipq6018-add-port5-sgmii-rates.patch" "$TREE_2B/$PATCH_REL_DIR/"
+
+set +e
+"$BASH_BIN" "$TEST_SCRIPT" "$TREE_2B" > "$TMP_DIR/test2b.log" 2>&1
+EXIT_2B=$?
+set -e
+if [ "$EXIT_2B" -ne 1 ]; then
+    echo "FAIL: Expected exit 1 for unpatched PPE driver, got $EXIT_2B" >&2
+    cat "$TMP_DIR/test2b.log" >&2
+    exit 1
+fi
+if ! grep -q "未成功植入 QCA8081 时钟修复逻辑" "$TMP_DIR/test2b.log"; then
+    echo "FAIL: Error message did not report unpatched clock logic: $(cat "$TMP_DIR/test2b.log")" >&2
+    exit 1
+fi
+echo "PASS: Unpatched PPE driver strictly blocked (exit code 1)."
+
+# -----------------------------------------------------------------------------
+# Test 3: 补丁缺失拦截 (Clock Frequency Patch Missing Blocked)
+# -----------------------------------------------------------------------------
+echo "--- Test 3a: Target tree missing both 0084/0918 and frequency table strictly blocked ---"
+TREE_3A="$TMP_DIR/tree_3a"
+setup_tree "$TREE_3A"
+cp "$TREE_1A/$PPE_REL_DIR/qca_ppe_main.c" "$TREE_3A/$PPE_REL_DIR/qca_ppe_main.c"
+# patches-6.18 目录下无任何补丁文件
+
+set +e
+"$BASH_BIN" "$TEST_SCRIPT" "$TREE_3A" > "$TMP_DIR/test3a.log" 2>&1
+EXIT_3A=$?
+set -e
+if [ "$EXIT_3A" -ne 1 ]; then
+    echo "FAIL: Expected exit 1 for missing clock patch, got $EXIT_3A" >&2
+    cat "$TMP_DIR/test3a.log" >&2
+    exit 1
+fi
+if ! grep -q "IPQ6018 GCC 时钟补丁缺失或为空" "$TMP_DIR/test3a.log"; then
+    echo "FAIL: Error message did not report missing IPQ6018 patch: $(cat "$TMP_DIR/test3a.log")" >&2
+    exit 1
+fi
+echo "PASS: Missing IPQ6018 clock patch strictly blocked (exit code 1)."
+
+echo "--- Test 3b: Empty (0-byte) 0084 clock patch strictly blocked ---"
+TREE_3B="$TMP_DIR/tree_3b"
+setup_tree "$TREE_3B"
+cp "$TREE_1A/$PPE_REL_DIR/qca_ppe_main.c" "$TREE_3B/$PPE_REL_DIR/qca_ppe_main.c"
+touch "$TREE_3B/$PATCH_REL_DIR/0084-clk-qcom-gcc-ipq6018-add-port5-sgmii-rates.patch"
+
+set +e
+"$BASH_BIN" "$TEST_SCRIPT" "$TREE_3B" > "$TMP_DIR/test3b.log" 2>&1
+EXIT_3B=$?
+set -e
+if [ "$EXIT_3B" -ne 1 ]; then
+    echo "FAIL: Expected exit 1 for 0-byte clock patch, got $EXIT_3B" >&2
+    cat "$TMP_DIR/test3b.log" >&2
+    exit 1
+fi
+echo "PASS: Empty 0-byte clock patch strictly blocked (exit code 1)."
+
+echo "--- Test 3c: Non-empty 0084 clock patch missing frequency fix strictly blocked ---"
+TREE_3C="$TMP_DIR/tree_3c"
+setup_tree "$TREE_3C"
+cp "$TREE_1A/$PPE_REL_DIR/qca_ppe_main.c" "$TREE_3C/$PPE_REL_DIR/qca_ppe_main.c"
+echo "corrupted patch content without the required rate table" > "$TREE_3C/$PATCH_REL_DIR/0084-clk-qcom-gcc-ipq6018-add-port5-sgmii-rates.patch"
+
+set +e
+"$BASH_BIN" "$TEST_SCRIPT" "$TREE_3C" > "$TMP_DIR/test3c.log" 2>&1
+EXIT_3C=$?
+set -e
+if [ "$EXIT_3C" -ne 1 ]; then
+    echo "FAIL: Expected exit 1 for corrupted 0084 clock patch, got $EXIT_3C" >&2
+    cat "$TMP_DIR/test3c.log" >&2
+    exit 1
+fi
+if ! grep -q "IPQ6018 GCC 时钟补丁缺失或为空" "$TMP_DIR/test3c.log"; then
+    echo "FAIL: Error message did not report missing IPQ6018 patch: $(cat "$TMP_DIR/test3c.log")" >&2
+    exit 1
+fi
+echo "PASS: Non-empty 0084 clock patch missing frequency fix strictly blocked (exit code 1)."
+
+echo "--- Test 3d: Corrupted generic patch missing frequency fix strictly blocked ---"
+TREE_3D="$TMP_DIR/tree_3d"
+setup_tree "$TREE_3D"
+cp "$TREE_1A/$PPE_REL_DIR/qca_ppe_main.c" "$TREE_3D/$PPE_REL_DIR/qca_ppe_main.c"
+echo "custom patch without frequency rate" > "$TREE_3D/$PATCH_REL_DIR/custom-clk-gcc.patch"
+
+set +e
+"$BASH_BIN" "$TEST_SCRIPT" "$TREE_3D" > "$TMP_DIR/test3d.log" 2>&1
+EXIT_3D=$?
+set -e
+if [ "$EXIT_3D" -ne 1 ]; then
+    echo "FAIL: Expected exit 1 for corrupted generic clock patch, got $EXIT_3D" >&2
+    cat "$TMP_DIR/test3d.log" >&2
+    exit 1
+fi
+if ! grep -q "IPQ6018 GCC 时钟补丁缺失或为空" "$TMP_DIR/test3d.log"; then
+    echo "FAIL: Error message did not report missing IPQ6018 patch: $(cat "$TMP_DIR/test3d.log")" >&2
+    exit 1
+fi
+echo "PASS: Corrupted generic clock patch missing frequency fix strictly blocked (exit code 1)."
+
+# -----------------------------------------------------------------------------
+# Test 4: 冲突补丁残留拦截 (IPQ8074 Conflict Patch Blocked)
+# -----------------------------------------------------------------------------
+echo "--- Test 4: Obsolete IPQ8074 conflict patch residual strictly blocked ---"
+TREE_4="$TMP_DIR/tree_4"
+setup_tree "$TREE_4"
+cp "$TREE_1A/$PPE_REL_DIR/qca_ppe_main.c" "$TREE_4/$PPE_REL_DIR/qca_ppe_main.c"
+cp "$TREE_1A/$PATCH_REL_DIR/0084-clk-qcom-gcc-ipq6018-add-port5-sgmii-rates.patch" "$TREE_4/$PATCH_REL_DIR/"
+echo "conflict" > "$TREE_4/$PATCH_REL_DIR/0919-clk-qcom-gcc-ipq8074-keep-port-5-on-uniphy1-at-SGMII-rates.patch"
+
+set +e
+"$BASH_BIN" "$TEST_SCRIPT" "$TREE_4" > "$TMP_DIR/test4.log" 2>&1
+EXIT_4=$?
+set -e
+if [ "$EXIT_4" -ne 1 ]; then
+    echo "FAIL: Expected exit 1 for IPQ8074 conflict patch, got $EXIT_4" >&2
+    cat "$TMP_DIR/test4.log" >&2
+    exit 1
+fi
+if ! grep -q "检测到已废弃的 IPQ8074 冲突补丁残留" "$TMP_DIR/test4.log"; then
+    echo "FAIL: Error message did not report conflict patch: $(cat "$TMP_DIR/test4.log")" >&2
+    exit 1
+fi
+echo "PASS: IPQ8074 conflict patch residual strictly blocked (exit code 1)."
+
+# -----------------------------------------------------------------------------
+# Test 5: 工作流无残留外挂调用门禁 (No Residual External Helper Invocations)
+# -----------------------------------------------------------------------------
+echo "--- Test 5: Verify workflow files have no residual external patch helper invocations ---"
+if grep -q "prepare-qca8081-clock-fix.sh" "$WORKFLOW_FILE"; then
+    echo "FAIL: Residual prepare-qca8081-clock-fix.sh found in $WORKFLOW_FILE!" >&2
+    grep -n "prepare-qca8081-clock-fix.sh" "$WORKFLOW_FILE" >&2
+    exit 1
+fi
+if grep -q "Fix QCA8081 Port Clocks" "$WORKFLOW_FILE"; then
+    echo "FAIL: Residual 'Fix QCA8081 Port Clocks' step found in $WORKFLOW_FILE!" >&2
+    grep -n "Fix QCA8081 Port Clocks" "$WORKFLOW_FILE" >&2
     exit 1
 fi
 
-CLONE_LINE=$(grep -n -- "- name: Clone Code" "$WORKFLOW_FILE" | head -n 1 | cut -d: -f1 || true)
-HELPER_LINE=$(grep -n -- "prepare-qca8081-clock-fix.sh" "$WORKFLOW_FILE" | head -n 1 | cut -d: -f1 || true)
-FEEDS_LINE=$(grep -n -- "- name: Update Feeds" "$WORKFLOW_FILE" | head -n 1 | cut -d: -f1 || true)
-
-if [ -n "$CLONE_LINE" ] && [ -n "$HELPER_LINE" ] && [ -n "$FEEDS_LINE" ] && \
-   [ "$CLONE_LINE" -lt "$HELPER_LINE" ] && [ "$HELPER_LINE" -lt "$FEEDS_LINE" ]; then
-    echo 'PASS: shared workflow applies the fix before configuration for PURE and PLUS'
-else
-    echo "FAIL: workflow step ordering is invalid: Clone=$CLONE_LINE, Helper=$HELPER_LINE, Feeds=$FEEDS_LINE" >&2
+ALL_WF_RESIDUALS=$(grep -rn "prepare-qca8081-clock-fix" "$REPO_ROOT/.github/workflows" 2>/dev/null || true)
+if [ -n "$ALL_WF_RESIDUALS" ]; then
+    echo "FAIL: Residual references found in .github/workflows:" >&2
+    echo "$ALL_WF_RESIDUALS" >&2
     exit 1
 fi
+echo "PASS: Workflows are completely clean of obsolete external helper scripts."
 
-# 8. 补丁目标路径白名单门禁校验（阻断任何非雅典娜 AX6600 硬件架构的补丁文件混入）
-echo "--- Test: Verify patch target files strictly match hardware whitelist ---"
-PATCH_TARGETS=$(grep -E '^diff --git a/' "$REPO_ROOT/Patches/qualcommax-qca8081-clock-fix.patch" | awk '{print $3}' | sed 's|^a/||' | sort)
-EXPECTED_TARGETS=$(printf "target/linux/qualcommax/files/drivers/net/ethernet/qualcomm/qca_ppe_main.c\ntarget/linux/qualcommax/patches-6.18/0918-clk-qcom-gcc-ipq6018-keep-port-5-on-uniphy1-at-SGMII-rates.patch" | sort)
-if [ "$PATCH_TARGETS" != "$EXPECTED_TARGETS" ]; then
-    echo "FAIL: Patch contains unexpected target files outside hardware whitelist:" >&2
-    echo "$PATCH_TARGETS" >&2
+# -----------------------------------------------------------------------------
+# Test 6: 冗余外挂文件清理门禁 (External Out-of-tree Files Physically Cleaned)
+# -----------------------------------------------------------------------------
+echo "--- Test 6: Verify out-of-tree patch files and scripts are deleted from repo ---"
+if [ -f "$REPO_ROOT/Patches/qualcommax-qca8081-clock-fix.patch" ]; then
+    echo "FAIL: Patches/qualcommax-qca8081-clock-fix.patch still exists in repository!" >&2
     exit 1
 fi
-echo 'PASS: patch target files strictly match hardware whitelist'
-
-# 8b. 验证白名单对多芯片/无关芯片补丁的防御能力（反例演练）
-TMP_BAD_PATCH="$TMP/bad_patch.patch"
-cp "$REPO_ROOT/Patches/qualcommax-qca8081-clock-fix.patch" "$TMP_BAD_PATCH"
-printf "\ndiff --git a/target/linux/qualcommax/patches-6.18/0919-clk-qcom-gcc-ipq8074.patch b/target/linux/qualcommax/patches-6.18/0919-clk-qcom-gcc-ipq8074.patch\n" >> "$TMP_BAD_PATCH"
-BAD_TARGETS=$(grep -E '^diff --git a/' "$TMP_BAD_PATCH" | awk '{print $3}' | sed 's|^a/||' | sort)
-if [ "$BAD_TARGETS" = "$EXPECTED_TARGETS" ]; then
-    echo "FAIL: Whitelist failed to detect injected IPQ8074 patch target!" >&2
+if [ -f "$REPO_ROOT/.github/scripts/prepare-qca8081-clock-fix.sh" ]; then
+    echo "FAIL: .github/scripts/prepare-qca8081-clock-fix.sh still exists in repository!" >&2
     exit 1
 fi
-echo 'PASS: patch whitelist detector reliably catches unauthorized target injections'
+if [ ! -f "$REPO_ROOT/Patches/README.md" ]; then
+    echo "FAIL: Patches/README.md missing!" >&2
+    exit 1
+fi
+if ! grep -q "原生内置说明" "$REPO_ROOT/Patches/README.md"; then
+    echo "FAIL: Patches/README.md not updated with native upstream integration documentation!" >&2
+    exit 1
+fi
+echo "PASS: Obsolete patch and script files physically deleted; README updated."
 
-echo "=== All QCA8081 Clock Fix Regression Tests Passed! ==="
+echo "=== All QCA8081 Native Clock Fix Assertion & Regression Tests Passed! ==="

@@ -203,6 +203,7 @@ echo "PASS: Target tree PPE driver without clock fix strictly failed (exit code 
 echo "--- Case: Target tree IPQ6018 clock patch missing or empty ---"
 echo "int ppe_port_clk_parents(void *priv) { return 0; }" > "$TMP_DIR/target/linux/qualcommax/files/drivers/net/ethernet/qualcomm/qca_ppe_main.c"
 mkdir -p "$TMP_DIR/target/linux/qualcommax/patches-6.18"
+rm -f "$TMP_DIR/target/linux/qualcommax/patches-6.18/0084-clk-qcom-gcc-ipq6018-add-port5-sgmii-rates.patch"
 rm -f "$TMP_DIR/target/linux/qualcommax/patches-6.18/0918-clk-qcom-gcc-ipq6018-keep-port-5-on-uniphy1-at-SGMII-rates.patch"
 set +e
 "$BASH_BIN" "$TEST_SCRIPT" "$TMP_DIR/.config" "PLUS" > "$TMP_DIR/output.log" 2>&1
@@ -219,9 +220,27 @@ if ! grep -q "IPQ6018 GCC 时钟补丁缺失或为空" "$TMP_DIR/output.log"; th
 fi
 echo "PASS: Target tree missing IPQ6018 patch strictly failed (exit code 1)."
 
+# 8b2. 真实构建环境 IPQ6018 时钟补丁存在但未包含有效分频配置检测：严格拦截
+echo "--- Case: Target tree IPQ6018 clock patch present but missing frequency table ---"
+echo "corrupted patch content without the required rate table" > "$TMP_DIR/target/linux/qualcommax/patches-6.18/0084-clk-qcom-gcc-ipq6018-add-port5-sgmii-rates.patch"
+set +e
+"$BASH_BIN" "$TEST_SCRIPT" "$TMP_DIR/.config" "PLUS" > "$TMP_DIR/output.log" 2>&1
+ACTUAL_EXIT=$?
+set -e
+if [ "$ACTUAL_EXIT" -ne 1 ]; then
+    echo "FAIL: Corrupted IPQ6018 patch expected exit 1, but got $ACTUAL_EXIT" >&2
+    cat "$TMP_DIR/output.log" >&2
+    exit 1
+fi
+if ! grep -q "IPQ6018 GCC 时钟补丁缺失或为空" "$TMP_DIR/output.log"; then
+    echo "FAIL: Error message did not report missing IPQ6018 patch: $(cat "$TMP_DIR/output.log")" >&2
+    exit 1
+fi
+echo "PASS: Target tree corrupted IPQ6018 patch strictly failed (exit code 1)."
+
 # 8c. 真实构建环境 IPQ8074 冲突补丁残留检测：严格拦截
 echo "--- Case: Target tree IPQ8074 conflict patch present ---"
-echo "patch content" > "$TMP_DIR/target/linux/qualcommax/patches-6.18/0918-clk-qcom-gcc-ipq6018-keep-port-5-on-uniphy1-at-SGMII-rates.patch"
+echo "C(P_UNIPHY1_RX, 1, 0, 0)" > "$TMP_DIR/target/linux/qualcommax/patches-6.18/0084-clk-qcom-gcc-ipq6018-add-port5-sgmii-rates.patch"
 echo "conflict patch content" > "$TMP_DIR/target/linux/qualcommax/patches-6.18/0919-clk-qcom-gcc-ipq8074-keep-port-5-on-uniphy1-at-SGMII-rates.patch"
 set +e
 "$BASH_BIN" "$TEST_SCRIPT" "$TMP_DIR/.config" "PLUS" > "$TMP_DIR/output.log" 2>&1
