@@ -86,7 +86,7 @@ if [ -z "$BASH_BIN" ] || ! "$BASH_BIN" -c "true" 2>/dev/null; then
 fi
 
 # 动态模拟 CI 断言逻辑：提取 PLUS 插件断言块（基于语义锚点，避免硬编码行号因文件改动失效）
-ASSERT_SNIPPET="$(awk '/# 5\. PLUS 核心插件入选断言/{flag=1; next} flag && /if \[\[.*FAIL/{flag=0} flag' "$WORKFLOW_FILE")"
+ASSERT_SNIPPET="$(awk '/# 5\. PLUS 核心插件入选断言/{flag=1; next} flag && /# 5b\.|# 6\./{flag=0} flag' "$WORKFLOW_FILE")"
 if [ -z "$ASSERT_SNIPPET" ]; then
     echo "FAIL: Failed to extract PLUS assertion block from $WORKFLOW_FILE!" >&2
     exit 1

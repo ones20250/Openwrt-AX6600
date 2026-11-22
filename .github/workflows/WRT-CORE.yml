@@ -309,6 +309,22 @@ jobs:
             done
           fi
 
+          # 5b. PLUS USB 打印机内核驱动与依赖完整性断言
+          if [[ "${WRT_PROFILE_UPPER:-${WRT_PROFILE}}" == "PLUS" ]]; then
+            PRINT_INTENT="CONFIG_PACKAGE_kmod-usb-printer=y"
+            if [[ -f .config.seed ]]; then
+              PRINT_INTENT=$(grep -E "^(#\s*)?CONFIG_PACKAGE_kmod-usb-printer(=|[[:space:]])" .config.seed | tail -n 1 || true)
+            fi
+            if [[ "$PRINT_INTENT" == "CONFIG_PACKAGE_kmod-usb-printer=y" ]]; then
+              if grep -q "^CONFIG_PACKAGE_kmod-usb-printer=y" .config; then
+                echo "  [PASS] PLUS USB 打印机驱动 kmod-usb-printer: 已声明启用并成功入选"
+              else
+                echo "::error::断言失败: PLUS USB 打印机驱动 kmod-usb-printer 未实际入选（可能缺少 printer-support 依赖）！"
+                FAIL=1
+              fi
+            fi
+          fi
+
           # 6. Qualcomm PPE 时钟驱动原生完备性断言
           PPE_DRIVER="target/linux/qualcommax/files/drivers/net/ethernet/qualcomm/qca_ppe_main.c"
           UPSTREAM_0084_PATCH="target/linux/qualcommax/patches-6.18/0084-clk-qcom-gcc-ipq6018-add-port5-sgmii-rates.patch"

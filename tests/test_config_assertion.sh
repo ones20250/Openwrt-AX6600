@@ -89,18 +89,20 @@ run_case() {
     echo "PASS: $CASE_NAME (exit code $ACTUAL_EXIT as expected)."
 }
 
-# 1. 官方全量 PLUS 构建：5 个核心插件均声明且入选
+# 1. 官方全量 PLUS 构建：5 个核心插件与 USB 打印机驱动均声明且入选
 run_case "Official PLUS full packages present" \
     "CONFIG_PACKAGE_luci-app-passwall2=y
 CONFIG_PACKAGE_luci-app-openclash=y
 CONFIG_PACKAGE_luci-app-dockerman=y
 CONFIG_PACKAGE_luci-app-adguardhome=y
-CONFIG_PACKAGE_luci-app-wolultra=y" \
+CONFIG_PACKAGE_luci-app-wolultra=y
+CONFIG_PACKAGE_kmod-usb-printer=y" \
     "CONFIG_PACKAGE_luci-app-passwall2=y
 CONFIG_PACKAGE_luci-app-openclash=y
 CONFIG_PACKAGE_luci-app-dockerman=y
 CONFIG_PACKAGE_luci-app-adguardhome=y
-CONFIG_PACKAGE_luci-app-wolultra=y" 0
+CONFIG_PACKAGE_luci-app-wolultra=y
+CONFIG_PACKAGE_kmod-usb-printer=y" 0
 
 # 2. Issue #29 场景：用户紧贴注释 passwall2
 run_case "User commented out passwall2 (#CONFIG_PACKAGE_...)" \
@@ -151,6 +153,20 @@ CONFIG_PACKAGE_luci-app-dockerman=y
 CONFIG_PACKAGE_luci-app-adguardhome=y
 CONFIG_PACKAGE_luci-app-wolultra=y" 1
 
+# 5b. Issue #36 故障注入：声明启用 kmod-usb-printer 但因缺少依赖被静默丢弃
+run_case "Silent drop detection of kmod-usb-printer (missing printer-support)" \
+    "CONFIG_PACKAGE_luci-app-passwall2=y
+CONFIG_PACKAGE_luci-app-openclash=y
+CONFIG_PACKAGE_luci-app-dockerman=y
+CONFIG_PACKAGE_luci-app-adguardhome=y
+CONFIG_PACKAGE_luci-app-wolultra=y
+CONFIG_PACKAGE_kmod-usb-printer=y" \
+    "CONFIG_PACKAGE_luci-app-passwall2=y
+CONFIG_PACKAGE_luci-app-openclash=y
+CONFIG_PACKAGE_luci-app-dockerman=y
+CONFIG_PACKAGE_luci-app-adguardhome=y
+CONFIG_PACKAGE_luci-app-wolultra=y" 1
+
 # 6. 单文件兼容性：无 .config.seed 时默认必须全部在场
 run_case "Compatibility: missing seed file strictly requires all packages" \
     "NONE" \
@@ -158,13 +174,14 @@ run_case "Compatibility: missing seed file strictly requires all packages" \
 CONFIG_PACKAGE_luci-app-openclash=y
 CONFIG_PACKAGE_luci-app-dockerman=y
 CONFIG_PACKAGE_luci-app-adguardhome=y
-CONFIG_PACKAGE_luci-app-wolultra=y" 0
+CONFIG_PACKAGE_luci-app-wolultra=y
+CONFIG_PACKAGE_kmod-usb-printer=y" 0
 
 # 7. 真实构建环境缺失 PPE 驱动检测：在 target 存在时严格拦截驱动缺失
 echo "--- Case: Target tree present but Qualcomm PPE driver missing ---"
 mkdir -p "$TMP_DIR/target"
-printf "CONFIG_PACKAGE_luci-app-passwall2=y\nCONFIG_PACKAGE_luci-app-openclash=y\nCONFIG_PACKAGE_luci-app-dockerman=y\nCONFIG_PACKAGE_luci-app-adguardhome=y\nCONFIG_PACKAGE_luci-app-wolultra=y\n" > "$TMP_DIR/.config"
-printf "CONFIG_PACKAGE_luci-app-passwall2=y\nCONFIG_PACKAGE_luci-app-openclash=y\nCONFIG_PACKAGE_luci-app-dockerman=y\nCONFIG_PACKAGE_luci-app-adguardhome=y\nCONFIG_PACKAGE_luci-app-wolultra=y\n" > "$TMP_DIR/.config.seed"
+printf "CONFIG_PACKAGE_luci-app-passwall2=y\nCONFIG_PACKAGE_luci-app-openclash=y\nCONFIG_PACKAGE_luci-app-dockerman=y\nCONFIG_PACKAGE_luci-app-adguardhome=y\nCONFIG_PACKAGE_luci-app-wolultra=y\nCONFIG_PACKAGE_kmod-usb-printer=y\n" > "$TMP_DIR/.config"
+printf "CONFIG_PACKAGE_luci-app-passwall2=y\nCONFIG_PACKAGE_luci-app-openclash=y\nCONFIG_PACKAGE_luci-app-dockerman=y\nCONFIG_PACKAGE_luci-app-adguardhome=y\nCONFIG_PACKAGE_luci-app-wolultra=y\nCONFIG_PACKAGE_kmod-usb-printer=y\n" > "$TMP_DIR/.config.seed"
 set +e
 "$BASH_BIN" "$TEST_SCRIPT" "$TMP_DIR/.config" "PLUS" > "$TMP_DIR/output.log" 2>&1
 ACTUAL_EXIT=$?
