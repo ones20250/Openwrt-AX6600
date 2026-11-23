@@ -285,12 +285,12 @@ chmod +x "$DEFAULT_FSTRIM_SCRIPT"
 # =========================================================
 # DoH 加密 DNS 代理初始化（待命模式）：
 # 1. 源码层原生置换：扫描并重写 ./package 与 ./feeds 下的 https-dns-proxy.config 与 https-dns-proxy.conf
-# 2. 严格保护 sysupgrade 保留配置升级场景：已有配置和服务启用状态 100% 保持，绝不强制禁用
-# 3. 注入 uci-defaults 脚本 (97-default-https-dns-proxy)：全新刷机时预置国内合规待命模板 (DNSPod/AliDNS)，杜绝 53 端口劫持与死锁
-# 4. 构建期清理 rootfs 自启链接，仅在全新刷机时开机默认处于待命禁用状态
+# 2. 源码层 init 脚本加固：离线构建期阻断 prepare_rootfs 生成开机自启软链接，杜绝 SquashFS ROM 天生携带自启链接
+# 3. 严格保护 sysupgrade 保留配置升级场景：只要既有配置存在，100% 保持用户配置与启停状态，绝不篡改重写
+# 4. 注入 uci-defaults 脚本 (97-default-https-dns-proxy)：仅在全新出厂刷机且无配置文件时预置国内合规待命模板 (DNSPod/AliDNS)
 # =========================================================
 
-# 1. 源码层原生置换 (Source-Level Native Patching)：
+# 1. 源码层原生置换配置文件模板 (Source-Level Native Template Patching)：
 # 扫描并直接重写 ./package 与 ./feeds 下的 https-dns-proxy.config 与 https-dns-proxy.conf，
 # 将纯净的国内合规待命模板预置到源码树，切断 upstream 海外节点与 53 端口强制劫持污染。
 HDP_SOURCE_FILES=$(find ./package ./feeds -type f \( -name "https-dns-proxy.config" -o -name "https-dns-proxy.conf" \) 2>/dev/null || true)
@@ -317,6 +317,20 @@ EOF_HDP_SRC
 	done <<< "$HDP_SOURCE_FILES"
 fi
 
+# 2. 源码层 init 脚本启动策略加固 (Source-Level Init Service Patching)：
+# 针对离线 rootfs 构建阶段 (IPKG_INSTROOT 非空)，将 START/STOP 置空，彻底阻断 OpenWrt prepare_rootfs 自动生成自启软链接；
+# 在路由器运行期 (IPKG_INSTROOT 为空)，START=80 / STOP=10 正常生效，保障用户在 Web 页面按需启用/禁用功能完全正常。
+HDP_INIT_FILES=$(find ./package ./feeds -type f -name "https-dns-proxy.init" 2>/dev/null || true)
+if [ -n "$HDP_INIT_FILES" ]; then
+	while IFS= read -r hdp_init; do
+		[ -n "$hdp_init" ] || continue
+		if ! grep -q "IPKG_INSTROOT" "$hdp_init" 2>/dev/null; then
+			sed -i -E 's/^[[:space:]]*START=([0-9]+)/[ -n "$IPKG_INSTROOT" ] \&\& START="" || START=\1/' "$hdp_init"
+			sed -i -E 's/^[[:space:]]*STOP=([0-9]+)/[ -n "$IPKG_INSTROOT" ] \&\& STOP="" || STOP=\1/' "$hdp_init"
+		fi
+	done <<< "$HDP_INIT_FILES"
+fi
+
 DEFAULT_HDP_SCRIPT="$WIFI_DEFAULTS_DIR/97-default-https-dns-proxy"
 cat << 'EOF_HDP_UCI' > "$DEFAULT_HDP_SCRIPT"
 #!/bin/sh
@@ -325,8 +339,7 @@ cat << 'EOF_HDP_UCI' > "$DEFAULT_HDP_SCRIPT"
 SYS_PREFIX="${IPKG_INSTROOT:-${SIM_ROOT:-}}"
 
 # 1. 在 rootfs 构建期 (IPKG_INSTROOT)：
-# 清理构建期 package postinst 生成的自启软链接，杜绝 SquashFS ROM 天生携带自启链接导致用户主动禁用在升级后被复活；
-# 退出非 0 状态阻断构建阶段提前删除本脚本，确保随 rootfs 下发并在目标机首次开机时执行。
+# 清理构建期残留自启软链接，退出非 0 状态阻断构建阶段提前删除本脚本，确保随 rootfs 下发并在目标机首次开机时执行。
 if [ -n "$IPKG_INSTROOT" ]; then
 	rm -f "$IPKG_INSTROOT/etc/rc.d/"*https-dns-proxy 2>/dev/null || true
 	exit 1
@@ -336,18 +349,19 @@ CFG_FILE="$SYS_PREFIX/etc/config/https-dns-proxy"
 INIT_FILE="$SYS_PREFIX/etc/init.d/https-dns-proxy"
 
 # 2. 检查是否为保留配置升级 (sysupgrade) 或用户自定义配置：
-# 运行期精准指纹防假阳性：仅当配置文件包含上游出厂独有指纹（heartbeat.melmac.ca 或 force_dns_port）时，
-# 才判定为上游出厂残留文件，落入下方重写与待命禁用逻辑。
-# 合法用户自定义配置（无论配置什么节点）100% 受到静默退出 0 保护，绝不篡改配置，绝不删除用户自启软链接！
+# 严格防误杀原则：force_dns_port 是用户在 Web 界面选择“强制所有本地设备使用路由器 DNS”的合法功能配置，
+# 绝对不能作为出厂残留判定条件！
+# 仅当配置文件包含上游独有海外指纹 (heartbeat.melmac.ca) 时，才判定为上游原厂默认残留；
+# 只要用户配置了合法参数（如阿里心跳 dns.alidns.com、自定义实例、force_dns_port 等）或保留升级，100% 受到静默退出 0 保护！
 if [ -s "$CFG_FILE" ]; then
-	if grep -qE "(heartbeat\.melmac\.ca|force_dns_port)" "$CFG_FILE" 2>/dev/null; then
-		: # 上游出厂默认残留，落入下方待命模板重写与禁用流程
+	if grep -q "heartbeat\.melmac\.ca" "$CFG_FILE" 2>/dev/null; then
+		: # 上游原厂独有海外默认残留，落入下方待命模板置换与禁用流程
 	elif grep -q "config " "$CFG_FILE" 2>/dev/null; then
 		exit 0
 	fi
 fi
 
-# 3. 仅在全新刷机 / 出厂初始化（无既有可用配置或上游残留）时，执行待命模式初始化：
+# 3. 仅在全新刷机 / 出厂初始化（配置文件完全不存在或为空，或上游出厂海外残留）时，预置国内待命模板并确保禁用状态：
 # a. 确保服务开机默认处于禁用状态（待命模式），绝不默认接管 dnsmasq 上游与劫持 53 端口
 if [ -x "$INIT_FILE" ]; then
 	"$INIT_FILE" disable 2>/dev/null || true
