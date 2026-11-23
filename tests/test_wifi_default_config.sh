@@ -1067,13 +1067,17 @@ if [ ! -f "$CUSTOM_KEEP_FILE" ]; then
     echo "FAIL: $CUSTOM_KEEP_FILE was not created by Settings.sh!" >&2
     exit 1
 fi
-for req_path in "/etc/docker/daemon.json" "/etc/adguardhome.yaml" "/root/.ssh/" "/etc/rc.d/S80https-dns-proxy" "/etc/rc.d/*https-dns-proxy"; do
+for req_path in "/etc/docker/daemon.json" "/etc/adguardhome.yaml" "/root/.ssh/"; do
     if ! grep -Fxq "$req_path" "$CUSTOM_KEEP_FILE"; then
         echo "FAIL: $CUSTOM_KEEP_FILE missing declared path $req_path!" >&2
         exit 1
     fi
 done
-echo "PASS: 99-ax6600-custom keep.d whitelist correctly generated with all required non-UCI assets."
+if grep -q "rc.d" "$CUSTOM_KEEP_FILE"; then
+    echo "FAIL: $CUSTOM_KEEP_FILE must NOT contain /etc/rc.d/ system service symlinks!" >&2
+    exit 1
+fi
+echo "PASS: 99-ax6600-custom keep.d whitelist correctly generated with required non-UCI assets and excludes system service symlinks."
 
 # -----------------------------------------------------------------------------
 # 9. 现代 ucode 模板 (mac80211.uc) 与经典 shell 模板 (mac80211.sh) 原生修改验证
@@ -1307,24 +1311,25 @@ if [ -f "$MOCK_INSTROOT_HDP/etc/rc.d/S80https-dns-proxy" ] || [ -n "$(find "$MOC
 fi
 echo "PASS: Build-time protection verified: exit 1 preserves script in rootfs and cleans up *https-dns-proxy symlinks."
 
-# 11b: 全新刷机 / 首次启动场景：识别上游残留指纹 (heartbeat.melmac.ca / force_dns_port) 并重写为国内安全待命模板，禁用自启
-echo "--- Test 11b: Fresh install with upstream factory default fingerprint: rewrite to standby domestic template and disable service ---"
-SIM_HDP_FRESH="$TMP_DIR/sim_hdp_fresh"
-mkdir -p "$SIM_HDP_FRESH/etc/config" "$SIM_HDP_FRESH/etc/init.d" "$SIM_HDP_FRESH/etc/rc.d"
-touch "$SIM_HDP_FRESH/etc/rc.d/S80https-dns-proxy"
+# 11b: 存在即信任原则验证 (Trust Existing Configuration)：即使用户配置保留了官方默认心跳域 (heartbeat.melmac.ca)，升级时也 100% 信任并原样保留，绝不误杀重写
+echo "--- Test 11b: Trust Existing Configuration: pre-existing config with default heartbeat is 100% preserved ---"
+SIM_HDP_EXISTING="$TMP_DIR/sim_hdp_existing"
+mkdir -p "$SIM_HDP_EXISTING/etc/config" "$SIM_HDP_EXISTING/etc/init.d" "$SIM_HDP_EXISTING/etc/rc.d"
+touch "$SIM_HDP_EXISTING/etc/rc.d/S80https-dns-proxy"
 
-# 模拟上游软件包自带的默认出厂配置文件（含海外节点与独有出厂指纹）
-cat << 'EOF_UPSTREAM_HDP' > "$SIM_HDP_FRESH/etc/config/https-dns-proxy"
+# 模拟用户在 Web 页面自定义了实例，但心跳域保留了官方默认 heartbeat.melmac.ca
+cat << 'EOF_USER_HDP' > "$SIM_HDP_EXISTING/etc/config/https-dns-proxy"
 config main 'config'
 	option update_dnsmasq_config '*'
-	option force_dns_port '53'
-
-config https-dns-proxy 'upstream_google'
-	option resolver_url 'https://dns.google/dns-query'
 	option heartbeat 'heartbeat.melmac.ca'
-EOF_UPSTREAM_HDP
 
-cat << 'EOF_MOCK_HDP_INIT' > "$SIM_HDP_FRESH/etc/init.d/https-dns-proxy"
+config https-dns-proxy 'custom_cf'
+	option resolver_url 'https://cloudflare-dns.com/dns-query'
+	option listen_addr '127.0.0.1'
+	option listen_port '5053'
+EOF_USER_HDP
+
+cat << 'EOF_MOCK_HDP_INIT' > "$SIM_HDP_EXISTING/etc/init.d/https-dns-proxy"
 #!/bin/sh
 INIT_DIR="$(cd "$(dirname "$0")" && pwd)"
 case "$1" in
@@ -1333,39 +1338,28 @@ case "$1" in
         ;;
 esac
 EOF_MOCK_HDP_INIT
-chmod +x "$SIM_HDP_FRESH/etc/init.d/https-dns-proxy"
+chmod +x "$SIM_HDP_EXISTING/etc/init.d/https-dns-proxy"
 
-SIM_ROOT="$SIM_HDP_FRESH" sh "$HDP_UCI_DEFAULT"
+SIM_ROOT="$SIM_HDP_EXISTING" sh "$HDP_UCI_DEFAULT"
 
-if [ -f "$SIM_HDP_FRESH/etc/rc.d/S80https-dns-proxy" ]; then
-    echo "FAIL: https-dns-proxy service was not disabled on fresh install!" >&2
+# 必须保持用户的原有软链接与原有配置，绝对不执行覆写，退出状态为 0
+if ! grep -q "custom_cf" "$SIM_HDP_EXISTING/etc/config/https-dns-proxy"; then
+    echo "FAIL: User custom instance was overwritten due to heuristic heartbeat match!" >&2
     exit 1
 fi
-if grep -q "heartbeat.melmac.ca" "$SIM_HDP_FRESH/etc/config/https-dns-proxy"; then
-    echo "FAIL: Upstream fingerprint heartbeat.melmac.ca was not eliminated!" >&2
+if ! grep -q "cloudflare-dns.com" "$SIM_HDP_EXISTING/etc/config/https-dns-proxy"; then
+    echo "FAIL: User resolver URL was wiped!" >&2
     exit 1
 fi
-if grep -q "force_dns_port" "$SIM_HDP_FRESH/etc/config/https-dns-proxy"; then
-    echo "FAIL: Upstream force_dns_port was not eliminated!" >&2
+if grep -q "doh.pub" "$SIM_HDP_EXISTING/etc/config/https-dns-proxy"; then
+    echo "FAIL: Standby template unexpectedly overwritten over existing config!" >&2
     exit 1
 fi
-if ! grep -q "dnsmasq_config_update '\*'" "$SIM_HDP_FRESH/etc/config/https-dns-proxy"; then
-    echo "FAIL: Official standard option dnsmasq_config_update '*' is missing or misspelled!" >&2
+if [ ! -f "$SIM_HDP_EXISTING/etc/rc.d/S80https-dns-proxy" ]; then
+    echo "FAIL: Existing service symlink was mistakenly deleted during sysupgrade!" >&2
     exit 1
 fi
-if ! grep -q "option force_dns '0'" "$SIM_HDP_FRESH/etc/config/https-dns-proxy"; then
-    echo "FAIL: Anti-hijack protection option force_dns '0' is missing!" >&2
-    exit 1
-fi
-if ! grep -q "https://doh.pub/dns-query" "$SIM_HDP_FRESH/etc/config/https-dns-proxy"; then
-    echo "FAIL: DNSPod template was not written to https-dns-proxy config!" >&2
-    exit 1
-fi
-if ! grep -q "https://dns.alidns.com/dns-query" "$SIM_HDP_FRESH/etc/config/https-dns-proxy"; then
-    echo "FAIL: AliDNS template was not written to https-dns-proxy config!" >&2
-    exit 1
-fi
-echo "PASS: Fresh install scenario verified: upstream fingerprint recognized, service disabled, and domestic standby template injected."
+echo "PASS: Trust Existing Configuration verified: user config with default heartbeat is 100% preserved without overwrite."
 
 # 11b-2: 全新刷机且无既有配置场景：生成安全国内待命模板并禁用自启软链接
 echo "--- Test 11b-2: Fresh install with no pre-existing config: generate standby domestic template and disable service ---"
@@ -1440,22 +1434,18 @@ if [ ! -f "$SIM_HDP_UPGRADE/etc/rc.d/S80https-dns-proxy" ]; then
 fi
 echo "PASS: Sysupgrade scenario (enabled service) verified: existing custom configuration and enabled service state 100% preserved."
 
-# 11d: 验证 sysupgrade keep.d 白名单正确包含 https-dns-proxy 启停状态双轨守护
-echo "--- Test 11d: Verify keep.d whitelist contains dual-track protection for https-dns-proxy ---"
+# 11d: 验证 sysupgrade keep.d 白名单严格遵循 OpenWrt 规范，绝不包含 /etc/rc.d/ 系统服务软链接
+echo "--- Test 11d: Verify keep.d whitelist adheres to OpenWrt standards and excludes /etc/rc.d/ ---"
 CUSTOM_KEEP_PATH="$MOCK_BUILD_TREE/package/base-files/files/lib/upgrade/keep.d/99-ax6600-custom"
 if [ ! -f "$CUSTOM_KEEP_PATH" ]; then
     echo "FAIL: 99-ax6600-custom keep.d file is missing!" >&2
     exit 1
 fi
-if ! grep -Fxq "/etc/rc.d/S80https-dns-proxy" "$CUSTOM_KEEP_PATH"; then
-    echo "FAIL: /etc/rc.d/S80https-dns-proxy is missing from 99-ax6600-custom keep whitelist!" >&2
+if grep -q "rc.d" "$CUSTOM_KEEP_PATH"; then
+    echo "FAIL: 99-ax6600-custom keep whitelist unexpectedly contains /etc/rc.d/ symlinks!" >&2
     exit 1
 fi
-if ! grep -Fxq "/etc/rc.d/*https-dns-proxy" "$CUSTOM_KEEP_PATH"; then
-    echo "FAIL: /etc/rc.d/*https-dns-proxy is missing from 99-ax6600-custom keep whitelist!" >&2
-    exit 1
-fi
-echo "PASS: Keep.d whitelist verified: /etc/rc.d/S80https-dns-proxy and wildcard *https-dns-proxy are properly protected."
+echo "PASS: Keep.d whitelist verified: strictly contains non-UCI user data assets and excludes system service symlinks."
 
 # 11e: 保留配置升级场景（用户此前主动禁用了服务）：升级后绝不意外复活自启软链接
 echo "--- Test 11e: Sysupgrade scenario with disabled service: verify service is NOT accidentally resurrected ---"

@@ -348,22 +348,18 @@ fi
 CFG_FILE="$SYS_PREFIX/etc/config/https-dns-proxy"
 INIT_FILE="$SYS_PREFIX/etc/init.d/https-dns-proxy"
 
-# 2. 检查是否为保留配置升级 (sysupgrade) 或用户自定义配置：
-# 严格防误杀原则：force_dns_port 是用户在 Web 界面选择“强制所有本地设备使用路由器 DNS”的合法功能配置，
-# 绝对不能作为出厂残留判定条件！
-# 仅当配置文件包含上游独有海外指纹 (heartbeat.melmac.ca) 时，才判定为上游原厂默认残留；
-# 只要用户配置了合法参数（如阿里心跳 dns.alidns.com、自定义实例、force_dns_port 等）或保留升级，100% 受到静默退出 0 保护！
+# 2. 检查是否为保留配置升级 (sysupgrade) 或用户既有配置：
+# 存在即信任原则 (Trust Existing Configuration)：
+# 只要既有配置文件存在且非空，100% 认定为合法用户配置或保留升级资产，
+# 立即静默退出 (exit 0)，绝对不进行任何启发式扫描，绝对不篡改重写，绝对不触碰服务状态！
 if [ -s "$CFG_FILE" ]; then
-	if grep -q "heartbeat\.melmac\.ca" "$CFG_FILE" 2>/dev/null; then
-		: # 上游原厂独有海外默认残留，落入下方待命模板置换与禁用流程
-	elif grep -q "config " "$CFG_FILE" 2>/dev/null; then
-		exit 0
-	fi
+	exit 0
 fi
 
-# 3. 仅在全新刷机 / 出厂初始化（配置文件完全不存在或为空，或上游出厂海外残留）时，预置国内待命模板并确保禁用状态：
+# 3. 仅在全新刷机 / 出厂初始化（配置文件完全不存在或为空）时，预置国内待命模板并确保禁用状态：
 # a. 确保服务开机默认处于禁用状态（待命模式），绝不默认接管 dnsmasq 上游与劫持 53 端口
 if [ -x "$INIT_FILE" ]; then
+	"$INIT_FILE" stop 2>/dev/null || true
 	"$INIT_FILE" disable 2>/dev/null || true
 fi
 rm -f "$SYS_PREFIX/etc/rc.d/"*https-dns-proxy 2>/dev/null || true
@@ -394,7 +390,8 @@ chmod +x "$DEFAULT_HDP_SCRIPT"
 
 # =========================================================
 # 系统升级与资产保护：预置 keep.d 白名单，防止保留配置升级时静默丢失应用级非 UCI 用户资产
-# 覆盖关键资产：/etc/docker/daemon.json, /etc/adguardhome.yaml, /root/.ssh/, /etc/rc.d/S80https-dns-proxy, /etc/rc.d/*https-dns-proxy
+# 覆盖关键资产：/etc/docker/daemon.json, /etc/adguardhome.yaml, /root/.ssh/
+# 架构底线：严禁在 keep.d 中加入 /etc/rc.d/ 系统服务软链接，彻底杜绝保留配置升级引发的 procd 启动队列竞争与状态失控
 # =========================================================
 KEEP_DIR="./package/base-files/files/lib/upgrade/keep.d"
 mkdir -p "$KEEP_DIR"
@@ -404,8 +401,6 @@ cat << 'EOF_KEEP' > "$CUSTOM_KEEP_FILE"
 /etc/docker/daemon.json
 /etc/adguardhome.yaml
 /root/.ssh/
-/etc/rc.d/S80https-dns-proxy
-/etc/rc.d/*https-dns-proxy
 EOF_KEEP
 chmod 644 "$CUSTOM_KEEP_FILE"
 
